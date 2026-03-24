@@ -16,7 +16,7 @@ The reference implementation is in TypeScript and runs on Cloudflare Workers.
 
 ## Cap'n Web vs Cap'n Proto
 
-Despite the similar name, **Cap'n Web is not Cap'n Proto**. They share philosophical DNA — both draw from the [capability-based security](https://en.wikipedia.org/wiki/Capability-based_security) model and the idea of promise pipelining pioneered by [E language](https://en.wikipedia.org/wiki/E_(programming_language)) and [CapTP](http://erights.org/elib/distrib/captp/index.html) — but differ significantly in design:
+Both protocols were designed by [Kenton Varda](https://github.com/kentonv) — he created Cap'n Proto, then joined Cloudflare where he built the Workers runtime and designed Cap'n Web as its RPC layer. Despite the shared author and similar name, **Cap'n Web is not Cap'n Proto**. They share philosophical DNA — both draw from the [capability-based security](https://en.wikipedia.org/wiki/Capability-based_security) model and the idea of promise pipelining pioneered by [E language](https://en.wikipedia.org/wiki/E_(programming_language)) and [CapTP](http://erights.org/elib/distrib/captp/index.html) — but differ significantly in design:
 
 | | Cap'n Proto | Cap'n Web |
 |---|---|---|
