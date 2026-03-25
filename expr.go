@@ -1,6 +1,7 @@
 package capnweb
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"math/big"
@@ -168,14 +169,159 @@ type ArrayExpr struct{ Elements []Expr }
 
 func (ArrayExpr) expr() {}
 
-// --- Encode / Decode stubs (to be implemented) ---
-
 // EncodeExpr serializes an Expr to its JSON wire representation.
-func EncodeExpr(_ Expr) (json.RawMessage, error) {
-	return nil, fmt.Errorf("capnweb: EncodeExpr not yet implemented")
+func EncodeExpr(e Expr) (json.RawMessage, error) {
+	switch v := e.(type) {
+	case LiteralExpr:
+		return json.Marshal(v.Value)
+
+	case UndefinedExpr:
+		return json.Marshal([]string{"undefined"})
+	case InfExpr:
+		return json.Marshal([]string{"inf"})
+	case NegInfExpr:
+		return json.Marshal([]string{"-inf"})
+	case NaNExpr:
+		return json.Marshal([]string{"nan"})
+
+	case BytesExpr:
+		return json.Marshal([]any{"bytes", base64.StdEncoding.EncodeToString(v.Data)})
+	case BigIntExpr:
+		return json.Marshal([]any{"bigint", v.Value.String()})
+	case DateExpr:
+		return json.Marshal([]any{"date", v.Time.UnixMilli()})
+
+	case ErrorExpr:
+		if v.Stack != "" {
+			return json.Marshal([]any{"error", v.Type, v.Message, v.Stack})
+		}
+		return json.Marshal([]any{"error", v.Type, v.Message})
+
+	case HeadersExpr:
+		return json.Marshal([]any{"headers", headerPairs(v.Header)})
+
+	case RequestExpr:
+		init := map[string]any{}
+		if v.Method != "" {
+			init["method"] = v.Method
+		}
+		if v.Headers != nil {
+			init["headers"] = headerPairs(v.Headers)
+		}
+		if v.Body != nil {
+			body, err := EncodeExpr(v.Body)
+			if err != nil {
+				return nil, fmt.Errorf("capnweb: request body: %w", err)
+			}
+			init["body"] = json.RawMessage(body)
+		}
+		return json.Marshal([]any{"request", v.URL, init})
+
+	case ResponseExpr:
+		init := map[string]any{}
+		if v.Status != 0 {
+			init["status"] = v.Status
+		}
+		if v.StatusText != "" {
+			init["statusText"] = v.StatusText
+		}
+		if v.Headers != nil {
+			init["headers"] = headerPairs(v.Headers)
+		}
+		var body json.RawMessage
+		if v.Body != nil {
+			var err error
+			body, err = EncodeExpr(v.Body)
+			if err != nil {
+				return nil, fmt.Errorf("capnweb: response body: %w", err)
+			}
+		} else {
+			body = json.RawMessage("null")
+		}
+		return json.Marshal([]any{"response", json.RawMessage(body), init})
+
+	case ImportExpr:
+		return encodeRefExpr("import", v.ImportID, v.Path, v.Args)
+	case PipelineExpr:
+		return encodeRefExpr("pipeline", v.ImportID, v.Path, v.Args)
+
+	case ExportExpr:
+		return json.Marshal([]any{"export", v.ExportID})
+	case PromiseExpr:
+		return json.Marshal([]any{"promise", v.ExportID})
+
+	case WritableExpr:
+		return json.Marshal([]any{"writable", v.ExportID})
+	case ReadableExpr:
+		return json.Marshal([]any{"readable", v.ImportID})
+
+	case RemapExpr:
+		caps, err := encodeExprSlice(v.Captures)
+		if err != nil {
+			return nil, fmt.Errorf("capnweb: remap captures: %w", err)
+		}
+		instrs, err := encodeExprSlice(v.Instructions)
+		if err != nil {
+			return nil, fmt.Errorf("capnweb: remap instructions: %w", err)
+		}
+		return json.Marshal([]any{"remap", v.ImportID, v.Path, caps, instrs})
+
+	case ArrayExpr:
+		encoded, err := encodeExprSlice(v.Elements)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal(encoded)
+
+	default:
+		return nil, fmt.Errorf("capnweb: unknown expression type %T", e)
+	}
 }
 
 // DecodeExpr deserializes a JSON wire value into an Expr.
 func DecodeExpr(_ json.RawMessage) (Expr, error) {
 	return nil, fmt.Errorf("capnweb: DecodeExpr not yet implemented")
+}
+
+// --- encoding helpers ---
+
+func headerPairs(h http.Header) [][2]string {
+	var pairs [][2]string
+	for name, vals := range h {
+		for _, v := range vals {
+			pairs = append(pairs, [2]string{name, v})
+		}
+	}
+	return pairs
+}
+
+func encodeRefExpr(tag string, id int64, path []string, args []Expr) (json.RawMessage, error) {
+	elems := []any{tag, id}
+	if len(path) > 0 || args != nil {
+		if len(path) == 1 {
+			elems = append(elems, path[0])
+		} else {
+			elems = append(elems, path)
+		}
+	}
+	if args != nil {
+		encoded, err := encodeExprSlice(args)
+		if err != nil {
+			return nil, fmt.Errorf("capnweb: %s args: %w", tag, err)
+		}
+		elems = append(elems, encoded)
+	}
+	return json.Marshal(elems)
+}
+
+func encodeExprSlice(exprs []Expr) ([]json.RawMessage, error) {
+	out := make([]json.RawMessage, len(exprs))
+	for i, e := range exprs {
+		b, err := EncodeExpr(e)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = b
+	}
+	return out, nil
 }
