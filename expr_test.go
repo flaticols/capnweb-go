@@ -186,6 +186,139 @@ func TestEncodeExprResponseNilBody(t *testing.T) {
 	}
 }
 
+func TestDecodeExpr(t *testing.T) {
+	tests := []struct {
+		name string
+		wire string
+		want Expr
+	}{
+		// Literals
+		{name: "string", wire: `"hello"`, want: LiteralExpr{Value: "hello"}},
+		{name: "number", wire: `42`, want: LiteralExpr{Value: 42.0}},
+		{name: "bool", wire: `true`, want: LiteralExpr{Value: true}},
+		{name: "null", wire: `null`, want: LiteralExpr{Value: nil}},
+
+		// Special values
+		{name: "undefined", wire: `["undefined"]`, want: UndefinedExpr{}},
+		{name: "inf", wire: `["inf"]`, want: InfExpr{}},
+		{name: "-inf", wire: `["-inf"]`, want: NegInfExpr{}},
+		{name: "nan", wire: `["nan"]`, want: NaNExpr{}},
+
+		// Data types
+		{name: "bytes", wire: `["bytes","3q0="]`, want: BytesExpr{Data: []byte{0xDE, 0xAD}}},
+		{name: "bigint", wire: `["bigint","999999999999"]`, want: BigIntExpr{Value: big.NewInt(999999999999)}},
+		{name: "date", wire: `["date",1700000000000]`, want: DateExpr{Time: time.UnixMilli(1700000000000)}},
+		{name: "error", wire: `["error","TypeError","bad"]`, want: ErrorExpr{Type: "TypeError", Message: "bad"}},
+		{name: "error+stack", wire: `["error","Error","x","at y:1"]`, want: ErrorExpr{Type: "Error", Message: "x", Stack: "at y:1"}},
+
+		// References
+		{name: "export", wire: `["export",-1]`, want: ExportExpr{ExportID: -1}},
+		{name: "promise", wire: `["promise",-2]`, want: PromiseExpr{ExportID: -2}},
+		{name: "import id only", wire: `["import",5]`, want: ImportExpr{ImportID: 5}},
+		{name: "import+method+args", wire: `["import",0,"greet",["hi"]]`, want: ImportExpr{ImportID: 0, Path: []string{"greet"}, Args: []Expr{LiteralExpr{Value: "hi"}}}},
+		{name: "pipeline", wire: `["pipeline",1,"getData",[]]`, want: PipelineExpr{ImportID: 1, Path: []string{"getData"}, Args: []Expr{}}},
+
+		// Streams
+		{name: "writable", wire: `["writable",-3]`, want: WritableExpr{ExportID: -3}},
+		{name: "readable", wire: `["readable",5]`, want: ReadableExpr{ImportID: 5}},
+
+		// Empty array
+		{name: "empty array", wire: `[]`, want: ArrayExpr{}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := DecodeExpr(json.RawMessage(tt.wire))
+			if err != nil {
+				t.Fatalf("DecodeExpr(%s): %v", tt.wire, err)
+			}
+			// Round-trip: encode back and compare JSON.
+			encoded, err := EncodeExpr(got)
+			if err != nil {
+				t.Fatalf("EncodeExpr after decode: %v", err)
+			}
+			wantEncoded, err := EncodeExpr(tt.want)
+			if err != nil {
+				t.Fatalf("EncodeExpr(want): %v", err)
+			}
+			assertJSONEq(t, string(wantEncoded), string(encoded))
+		})
+	}
+}
+
+func TestDecodeExprRoundTrip(t *testing.T) {
+	// Encode → Decode → Encode and verify JSON stability.
+	exprs := []struct {
+		name string
+		expr Expr
+	}{
+		{"literal string", LiteralExpr{Value: "test"}},
+		{"literal number", LiteralExpr{Value: 3.14}},
+		{"undefined", UndefinedExpr{}},
+		{"bytes", BytesExpr{Data: []byte{1, 2, 3}}},
+		{"bigint", BigIntExpr{Value: big.NewInt(-12345)}},
+		{"date", DateExpr{Time: time.UnixMilli(1700000000000)}},
+		{"error", ErrorExpr{Type: "RangeError", Message: "out of bounds"}},
+		{"export", ExportExpr{ExportID: -5}},
+		{"import+call", ImportExpr{ImportID: 0, Path: []string{"foo"}, Args: []Expr{LiteralExpr{Value: 42.0}}}},
+		{"pipeline", PipelineExpr{ImportID: 1, Path: []string{"bar"}, Args: []Expr{}}},
+		{"writable", WritableExpr{ExportID: -1}},
+		{"readable", ReadableExpr{ImportID: 3}},
+		{"array", ArrayExpr{Elements: []Expr{LiteralExpr{Value: "a"}, LiteralExpr{Value: 1.0}}}},
+	}
+
+	for _, tt := range exprs {
+		t.Run(tt.name, func(t *testing.T) {
+			j1, err := EncodeExpr(tt.expr)
+			if err != nil {
+				t.Fatalf("encode: %v", err)
+			}
+			decoded, err := DecodeExpr(j1)
+			if err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			j2, err := EncodeExpr(decoded)
+			if err != nil {
+				t.Fatalf("re-encode: %v", err)
+			}
+			assertJSONEq(t, string(j1), string(j2))
+		})
+	}
+}
+
+func TestDecodeExprErrors(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"empty", ""},
+		{"bytes missing data", `["bytes"]`},
+		{"bytes bad base64", `["bytes","!!!"]`},
+		{"bigint missing", `["bigint"]`},
+		{"bigint bad", `["bigint","abc"]`},
+		{"date missing", `["date"]`},
+		{"error too few", `["error","TypeError"]`},
+		{"headers missing", `["headers"]`},
+		{"export missing id", `["export"]`},
+		{"promise missing id", `["promise"]`},
+		{"import missing id", `["import"]`},
+		{"writable missing id", `["writable"]`},
+		{"readable missing id", `["readable"]`},
+		{"remap too few", `["remap",1]`},
+		{"request too few", `["request"]`},
+		{"response too few", `["response"]`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := DecodeExpr(json.RawMessage(tt.input))
+			if err == nil {
+				t.Fatalf("expected error for %s", tt.input)
+			}
+		})
+	}
+}
+
 // assertJSONEq compares two JSON strings semantically.
 func assertJSONEq(t *testing.T, want, got string) {
 	t.Helper()
