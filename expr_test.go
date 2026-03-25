@@ -319,6 +319,68 @@ func TestDecodeExprErrors(t *testing.T) {
 	}
 }
 
+func FuzzDecodeExpr(f *testing.F) {
+	// Seed corpus: valid expressions of every kind.
+	seeds := []string{
+		`"hello"`,
+		`42`,
+		`true`,
+		`null`,
+		`{"a":1}`,
+		`[]`,
+		`["undefined"]`,
+		`["inf"]`,
+		`["-inf"]`,
+		`["nan"]`,
+		`["bytes","AQID"]`,
+		`["bigint","12345"]`,
+		`["date",1700000000000]`,
+		`["error","Error","boom"]`,
+		`["error","TypeError","bad","at x:1"]`,
+		`["headers",[["Content-Type","text/plain"]]]`,
+		`["export",-1]`,
+		`["promise",-2]`,
+		`["import",0]`,
+		`["import",0,"greet",["hi"]]`,
+		`["pipeline",1,"getData",[]]`,
+		`["writable",-3]`,
+		`["readable",5]`,
+		`["remap",5,[],[["import",-3]],[["import",0,"name"]]]`,
+		`["request","https://example.com",{"method":"GET"}]`,
+		`["response","ok",{"status":200}]`,
+		`[1,2,3]`,
+		// Malformed inputs.
+		``,
+		`{`,
+		`[`,
+		`["bytes"]`,
+		`["bigint"]`,
+		`["unknown_tag",1,2,3]`,
+	}
+	for _, s := range seeds {
+		f.Add([]byte(s))
+	}
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		expr, err := DecodeExpr(json.RawMessage(data))
+		if err != nil {
+			return // invalid input is fine, just must not panic
+		}
+
+		// If decode succeeded, encode must also succeed.
+		encoded, err := EncodeExpr(expr)
+		if err != nil {
+			t.Fatalf("EncodeExpr failed after successful decode: %v\ninput: %s", err, data)
+		}
+
+		// Re-decode the encoded output must also succeed.
+		_, err = DecodeExpr(encoded)
+		if err != nil {
+			t.Fatalf("DecodeExpr failed on re-encoded output: %v\noriginal: %s\nencoded: %s", err, data, encoded)
+		}
+	})
+}
+
 // assertJSONEq compares two JSON strings semantically.
 func assertJSONEq(t *testing.T, want, got string) {
 	t.Helper()

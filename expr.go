@@ -1,6 +1,7 @@
 package capnweb
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -280,12 +281,14 @@ func EncodeExpr(e Expr) (json.RawMessage, error) {
 
 // DecodeExpr deserializes a JSON wire value into an Expr.
 func DecodeExpr(data json.RawMessage) (Expr, error) {
-	if len(data) == 0 {
+	// Trim leading whitespace to reliably detect the value type.
+	trimmed := bytes.TrimLeft(data, " \t\n\r")
+	if len(trimmed) == 0 {
 		return nil, fmt.Errorf("capnweb: empty expression")
 	}
 
 	// Non-array values are literals.
-	if data[0] != '[' {
+	if trimmed[0] != '[' {
 		var v any
 		if err := json.Unmarshal(data, &v); err != nil {
 			return nil, fmt.Errorf("capnweb: invalid literal: %w", err)
