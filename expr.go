@@ -175,7 +175,6 @@ func EncodeExpr(e Expr) (json.RawMessage, error) {
 	switch v := e.(type) {
 	case LiteralExpr:
 		return json.Marshal(v.Value)
-
 	case UndefinedExpr:
 		return json.Marshal([]string{"undefined"})
 	case InfExpr:
@@ -184,99 +183,109 @@ func EncodeExpr(e Expr) (json.RawMessage, error) {
 		return json.Marshal([]string{"-inf"})
 	case NaNExpr:
 		return json.Marshal([]string{"nan"})
-
 	case BytesExpr:
 		return json.Marshal([]any{"bytes", base64.StdEncoding.EncodeToString(v.Data)})
 	case BigIntExpr:
 		return json.Marshal([]any{"bigint", v.Value.String()})
 	case DateExpr:
 		return json.Marshal([]any{"date", v.Time.UnixMilli()})
-
 	case ErrorExpr:
-		if v.Stack != "" {
-			return json.Marshal([]any{"error", v.Type, v.Message, v.Stack})
-		}
-		return json.Marshal([]any{"error", v.Type, v.Message})
-
+		return encodeErrorExpr(v)
 	case HeadersExpr:
 		return json.Marshal([]any{"headers", headerPairs(v.Header)})
-
 	case RequestExpr:
-		init := map[string]any{}
-		if v.Method != "" {
-			init["method"] = v.Method
-		}
-		if v.Headers != nil {
-			init["headers"] = headerPairs(v.Headers)
-		}
-		if v.Body != nil {
-			body, err := EncodeExpr(v.Body)
-			if err != nil {
-				return nil, fmt.Errorf("capnweb: request body: %w", err)
-			}
-			init["body"] = json.RawMessage(body)
-		}
-		return json.Marshal([]any{"request", v.URL, init})
-
+		return encodeRequestExpr(v)
 	case ResponseExpr:
-		init := map[string]any{}
-		if v.Status != 0 {
-			init["status"] = v.Status
-		}
-		if v.StatusText != "" {
-			init["statusText"] = v.StatusText
-		}
-		if v.Headers != nil {
-			init["headers"] = headerPairs(v.Headers)
-		}
-		var body json.RawMessage
-		if v.Body != nil {
-			var err error
-			body, err = EncodeExpr(v.Body)
-			if err != nil {
-				return nil, fmt.Errorf("capnweb: response body: %w", err)
-			}
-		} else {
-			body = json.RawMessage("null")
-		}
-		return json.Marshal([]any{"response", json.RawMessage(body), init})
-
+		return encodeResponseExpr(v)
 	case ImportExpr:
 		return encodeRefExpr("import", v.ImportID, v.Path, v.Args)
 	case PipelineExpr:
 		return encodeRefExpr("pipeline", v.ImportID, v.Path, v.Args)
-
 	case ExportExpr:
 		return json.Marshal([]any{"export", v.ExportID})
 	case PromiseExpr:
 		return json.Marshal([]any{"promise", v.ExportID})
-
 	case WritableExpr:
 		return json.Marshal([]any{"writable", v.ExportID})
 	case ReadableExpr:
 		return json.Marshal([]any{"readable", v.ImportID})
-
 	case RemapExpr:
-		caps, err := encodeExprSlice(v.Captures)
-		if err != nil {
-			return nil, fmt.Errorf("capnweb: remap captures: %w", err)
-		}
-		instrs, err := encodeExprSlice(v.Instructions)
-		if err != nil {
-			return nil, fmt.Errorf("capnweb: remap instructions: %w", err)
-		}
-		return json.Marshal([]any{"remap", v.ImportID, v.Path, caps, instrs})
-
+		return encodeRemapExpr(&v)
 	case ArrayExpr:
-		encoded, err := encodeExprSlice(v.Elements)
-		if err != nil {
-			return nil, err
-		}
-		return json.Marshal(encoded)
-
+		return encodeArrayExpr(v)
 	default:
 		return nil, fmt.Errorf("capnweb: unknown expression type %T", e)
 	}
+}
+
+func encodeErrorExpr(v ErrorExpr) (json.RawMessage, error) {
+	if v.Stack != "" {
+		return json.Marshal([]any{"error", v.Type, v.Message, v.Stack})
+	}
+	return json.Marshal([]any{"error", v.Type, v.Message})
+}
+
+func encodeRequestExpr(v RequestExpr) (json.RawMessage, error) {
+	init := map[string]any{}
+	if v.Method != "" {
+		init["method"] = v.Method
+	}
+	if v.Headers != nil {
+		init["headers"] = headerPairs(v.Headers)
+	}
+	if v.Body != nil {
+		body, err := EncodeExpr(v.Body)
+		if err != nil {
+			return nil, fmt.Errorf("capnweb: request body: %w", err)
+		}
+		init["body"] = body
+	}
+	return json.Marshal([]any{"request", v.URL, init})
+}
+
+func encodeResponseExpr(v ResponseExpr) (json.RawMessage, error) {
+	init := map[string]any{}
+	if v.Status != 0 {
+		init["status"] = v.Status
+	}
+	if v.StatusText != "" {
+		init["statusText"] = v.StatusText
+	}
+	if v.Headers != nil {
+		init["headers"] = headerPairs(v.Headers)
+	}
+	body, err := encodeOptionalBody(v.Body)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal([]any{"response", body, init})
+}
+
+func encodeOptionalBody(e Expr) (json.RawMessage, error) {
+	if e == nil {
+		return json.RawMessage("null"), nil
+	}
+	return EncodeExpr(e)
+}
+
+func encodeRemapExpr(v *RemapExpr) (json.RawMessage, error) {
+	caps, err := encodeExprSlice(v.Captures)
+	if err != nil {
+		return nil, fmt.Errorf("capnweb: remap captures: %w", err)
+	}
+	instrs, err := encodeExprSlice(v.Instructions)
+	if err != nil {
+		return nil, fmt.Errorf("capnweb: remap instructions: %w", err)
+	}
+	return json.Marshal([]any{"remap", v.ImportID, v.Path, caps, instrs})
+}
+
+func encodeArrayExpr(v ArrayExpr) (json.RawMessage, error) {
+	encoded, err := encodeExprSlice(v.Elements)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(encoded)
 }
 
 // DecodeExpr deserializes a JSON wire value into an Expr.
@@ -310,6 +319,12 @@ func DecodeExpr(data json.RawMessage) (Expr, error) {
 		return decodeArrayElements(raw)
 	}
 
+	return decodeTaggedExpr(tag, raw)
+}
+
+// --- decode dispatch ---
+
+func decodeTaggedExpr(tag string, raw []json.RawMessage) (Expr, error) {
 	switch tag {
 	case "undefined":
 		return UndefinedExpr{}, nil
@@ -319,215 +334,206 @@ func DecodeExpr(data json.RawMessage) (Expr, error) {
 		return NegInfExpr{}, nil
 	case "nan":
 		return NaNExpr{}, nil
-
 	case "bytes":
-		if len(raw) < 2 {
-			return nil, fmt.Errorf("capnweb: bytes: missing data")
-		}
-		var s string
-		if err := json.Unmarshal(raw[1], &s); err != nil {
-			return nil, fmt.Errorf("capnweb: bytes: %w", err)
-		}
-		b, err := base64.StdEncoding.DecodeString(s)
-		if err != nil {
-			return nil, fmt.Errorf("capnweb: bytes base64: %w", err)
-		}
-		return BytesExpr{Data: b}, nil
-
+		return decodeBytesExpr(raw)
 	case "bigint":
-		if len(raw) < 2 {
-			return nil, fmt.Errorf("capnweb: bigint: missing value")
-		}
-		var s string
-		if err := json.Unmarshal(raw[1], &s); err != nil {
-			return nil, fmt.Errorf("capnweb: bigint: %w", err)
-		}
-		n, ok := new(big.Int).SetString(s, 10)
-		if !ok {
-			return nil, fmt.Errorf("capnweb: invalid bigint %q", s)
-		}
-		return BigIntExpr{Value: n}, nil
-
+		return decodeBigIntExpr(raw)
 	case "date":
-		if len(raw) < 2 {
-			return nil, fmt.Errorf("capnweb: date: missing value")
-		}
-		var ms float64
-		if err := json.Unmarshal(raw[1], &ms); err != nil {
-			return nil, fmt.Errorf("capnweb: date: %w", err)
-		}
-		return DateExpr{Time: time.UnixMilli(int64(ms))}, nil
-
+		return decodeDateExpr(raw)
 	case "error":
-		if len(raw) < 3 {
-			return nil, fmt.Errorf("capnweb: error: need type and message")
-		}
-		var typ, msg string
-		if err := json.Unmarshal(raw[1], &typ); err != nil {
-			return nil, fmt.Errorf("capnweb: error type: %w", err)
-		}
-		if err := json.Unmarshal(raw[2], &msg); err != nil {
-			return nil, fmt.Errorf("capnweb: error message: %w", err)
-		}
-		var stack string
-		if len(raw) > 3 {
-			_ = json.Unmarshal(raw[3], &stack)
-		}
-		return ErrorExpr{Type: typ, Message: msg, Stack: stack}, nil
-
+		return decodeErrorExpr(raw)
 	case "headers":
-		if len(raw) < 2 {
-			return nil, fmt.Errorf("capnweb: headers: missing pairs")
-		}
-		var pairs [][2]string
-		if err := json.Unmarshal(raw[1], &pairs); err != nil {
-			return nil, fmt.Errorf("capnweb: headers: %w", err)
-		}
-		h := make(http.Header, len(pairs))
-		for _, p := range pairs {
-			h.Add(p[0], p[1])
-		}
-		return HeadersExpr{Header: h}, nil
-
+		return decodeHeadersExpr(raw)
 	case "request":
-		if len(raw) < 3 {
-			return nil, fmt.Errorf("capnweb: request: need url and init")
-		}
-		var url string
-		if err := json.Unmarshal(raw[1], &url); err != nil {
-			return nil, fmt.Errorf("capnweb: request url: %w", err)
-		}
-		var init struct {
-			Method  string          `json:"method"`
-			Headers [][2]string     `json:"headers"`
-			Body    json.RawMessage `json:"body"`
-		}
-		if err := json.Unmarshal(raw[2], &init); err != nil {
-			return nil, fmt.Errorf("capnweb: request init: %w", err)
-		}
-		req := RequestExpr{
-			URL:    url,
-			Method: init.Method,
-		}
-		if init.Headers != nil {
-			req.Headers = make(http.Header, len(init.Headers))
-			for _, p := range init.Headers {
-				req.Headers.Add(p[0], p[1])
-			}
-		}
-		if len(init.Body) > 0 && string(init.Body) != "null" {
-			body, err := DecodeExpr(init.Body)
-			if err != nil {
-				return nil, fmt.Errorf("capnweb: request body: %w", err)
-			}
-			req.Body = body
-		}
-		return req, nil
-
+		return decodeRequestExpr(raw)
 	case "response":
-		if len(raw) < 3 {
-			return nil, fmt.Errorf("capnweb: response: need body and init")
-		}
-		var body Expr
-		if string(raw[1]) != "null" {
-			var err error
-			body, err = DecodeExpr(raw[1])
-			if err != nil {
-				return nil, fmt.Errorf("capnweb: response body: %w", err)
-			}
-		}
-		var init struct {
-			Status     int         `json:"status"`
-			StatusText string      `json:"statusText"`
-			Headers    [][2]string `json:"headers"`
-		}
-		if err := json.Unmarshal(raw[2], &init); err != nil {
-			return nil, fmt.Errorf("capnweb: response init: %w", err)
-		}
-		resp := ResponseExpr{
-			Status:     init.Status,
-			StatusText: init.StatusText,
-			Body:       body,
-		}
-		if init.Headers != nil {
-			resp.Headers = make(http.Header, len(init.Headers))
-			for _, p := range init.Headers {
-				resp.Headers.Add(p[0], p[1])
-			}
-		}
-		return resp, nil
-
+		return decodeResponseExpr(raw)
 	case "import":
 		return decodeRefAsImport(raw)
 	case "pipeline":
 		return decodeRefAsPipeline(raw)
-
 	case "export":
-		if len(raw) < 2 {
-			return nil, fmt.Errorf("capnweb: export: missing id")
-		}
-		var id int64
-		if err := decodeInt64(raw[1], &id); err != nil {
-			return nil, fmt.Errorf("capnweb: export id: %w", err)
-		}
-		return ExportExpr{ExportID: id}, nil
-
+		return decodeIDExpr(raw, "export", func(id int64) Expr { return ExportExpr{ExportID: id} })
 	case "promise":
-		if len(raw) < 2 {
-			return nil, fmt.Errorf("capnweb: promise: missing id")
-		}
-		var id int64
-		if err := decodeInt64(raw[1], &id); err != nil {
-			return nil, fmt.Errorf("capnweb: promise id: %w", err)
-		}
-		return PromiseExpr{ExportID: id}, nil
-
+		return decodeIDExpr(raw, "promise", func(id int64) Expr { return PromiseExpr{ExportID: id} })
 	case "writable":
-		if len(raw) < 2 {
-			return nil, fmt.Errorf("capnweb: writable: missing id")
-		}
-		var id int64
-		if err := decodeInt64(raw[1], &id); err != nil {
-			return nil, fmt.Errorf("capnweb: writable id: %w", err)
-		}
-		return WritableExpr{ExportID: id}, nil
-
+		return decodeIDExpr(raw, "writable", func(id int64) Expr { return WritableExpr{ExportID: id} })
 	case "readable":
-		if len(raw) < 2 {
-			return nil, fmt.Errorf("capnweb: readable: missing id")
-		}
-		var id int64
-		if err := decodeInt64(raw[1], &id); err != nil {
-			return nil, fmt.Errorf("capnweb: readable id: %w", err)
-		}
-		return ReadableExpr{ImportID: id}, nil
-
+		return decodeIDExpr(raw, "readable", func(id int64) Expr { return ReadableExpr{ImportID: id} })
 	case "remap":
-		if len(raw) < 5 {
-			return nil, fmt.Errorf("capnweb: remap: need 5 elements, got %d", len(raw))
-		}
-		var id int64
-		if err := decodeInt64(raw[1], &id); err != nil {
-			return nil, fmt.Errorf("capnweb: remap id: %w", err)
-		}
-		var path []string
-		if err := json.Unmarshal(raw[2], &path); err != nil {
-			return nil, fmt.Errorf("capnweb: remap path: %w", err)
-		}
-		caps, err := decodeExprSlice(raw[3])
-		if err != nil {
-			return nil, fmt.Errorf("capnweb: remap captures: %w", err)
-		}
-		instrs, err := decodeExprSlice(raw[4])
-		if err != nil {
-			return nil, fmt.Errorf("capnweb: remap instructions: %w", err)
-		}
-		return RemapExpr{ImportID: id, Path: path, Captures: caps, Instructions: instrs}, nil
-
+		return decodeRemapExpr(raw)
 	default:
-		// Unknown tag — treat as plain array.
 		return decodeArrayElements(raw)
 	}
+}
+
+func decodeIDExpr(raw []json.RawMessage, tag string, make_ func(int64) Expr) (Expr, error) {
+	if len(raw) < 2 {
+		return nil, fmt.Errorf("capnweb: %s: missing id", tag)
+	}
+	var id int64
+	if err := decodeInt64(raw[1], &id); err != nil {
+		return nil, fmt.Errorf("capnweb: %s id: %w", tag, err)
+	}
+	return make_(id), nil
+}
+
+func decodeBytesExpr(raw []json.RawMessage) (Expr, error) {
+	if len(raw) < 2 {
+		return nil, fmt.Errorf("capnweb: bytes: missing data")
+	}
+	var s string
+	if err := json.Unmarshal(raw[1], &s); err != nil {
+		return nil, fmt.Errorf("capnweb: bytes: %w", err)
+	}
+	b, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return nil, fmt.Errorf("capnweb: bytes base64: %w", err)
+	}
+	return BytesExpr{Data: b}, nil
+}
+
+func decodeBigIntExpr(raw []json.RawMessage) (Expr, error) {
+	if len(raw) < 2 {
+		return nil, fmt.Errorf("capnweb: bigint: missing value")
+	}
+	var s string
+	if err := json.Unmarshal(raw[1], &s); err != nil {
+		return nil, fmt.Errorf("capnweb: bigint: %w", err)
+	}
+	n, ok := new(big.Int).SetString(s, 10)
+	if !ok {
+		return nil, fmt.Errorf("capnweb: invalid bigint %q", s)
+	}
+	return BigIntExpr{Value: n}, nil
+}
+
+func decodeDateExpr(raw []json.RawMessage) (Expr, error) {
+	if len(raw) < 2 {
+		return nil, fmt.Errorf("capnweb: date: missing value")
+	}
+	var ms float64
+	if err := json.Unmarshal(raw[1], &ms); err != nil {
+		return nil, fmt.Errorf("capnweb: date: %w", err)
+	}
+	return DateExpr{Time: time.UnixMilli(int64(ms))}, nil
+}
+
+func decodeErrorExpr(raw []json.RawMessage) (Expr, error) {
+	if len(raw) < 3 {
+		return nil, fmt.Errorf("capnweb: error: need type and message")
+	}
+	var typ, msg string
+	if err := json.Unmarshal(raw[1], &typ); err != nil {
+		return nil, fmt.Errorf("capnweb: error type: %w", err)
+	}
+	if err := json.Unmarshal(raw[2], &msg); err != nil {
+		return nil, fmt.Errorf("capnweb: error message: %w", err)
+	}
+	var stack string
+	if len(raw) > 3 {
+		_ = json.Unmarshal(raw[3], &stack)
+	}
+	return ErrorExpr{Type: typ, Message: msg, Stack: stack}, nil
+}
+
+func decodeHeadersExpr(raw []json.RawMessage) (Expr, error) {
+	if len(raw) < 2 {
+		return nil, fmt.Errorf("capnweb: headers: missing pairs")
+	}
+	var pairs [][2]string
+	if err := json.Unmarshal(raw[1], &pairs); err != nil {
+		return nil, fmt.Errorf("capnweb: headers: %w", err)
+	}
+	return HeadersExpr{Header: pairsToHeader(pairs)}, nil
+}
+
+func pairsToHeader(pairs [][2]string) http.Header {
+	h := make(http.Header, len(pairs))
+	for _, p := range pairs {
+		h.Add(p[0], p[1])
+	}
+	return h
+}
+
+func decodeRequestExpr(raw []json.RawMessage) (Expr, error) {
+	if len(raw) < 3 {
+		return nil, fmt.Errorf("capnweb: request: need url and init")
+	}
+	var url string
+	if err := json.Unmarshal(raw[1], &url); err != nil {
+		return nil, fmt.Errorf("capnweb: request url: %w", err)
+	}
+	var init struct {
+		Method  string          `json:"method"`
+		Headers [][2]string     `json:"headers"`
+		Body    json.RawMessage `json:"body"`
+	}
+	if err := json.Unmarshal(raw[2], &init); err != nil {
+		return nil, fmt.Errorf("capnweb: request init: %w", err)
+	}
+	req := RequestExpr{URL: url, Method: init.Method}
+	if init.Headers != nil {
+		req.Headers = pairsToHeader(init.Headers)
+	}
+	if len(init.Body) > 0 && string(init.Body) != "null" {
+		body, err := DecodeExpr(init.Body)
+		if err != nil {
+			return nil, fmt.Errorf("capnweb: request body: %w", err)
+		}
+		req.Body = body
+	}
+	return req, nil
+}
+
+func decodeResponseExpr(raw []json.RawMessage) (Expr, error) {
+	if len(raw) < 3 {
+		return nil, fmt.Errorf("capnweb: response: need body and init")
+	}
+	var body Expr
+	if string(raw[1]) != "null" {
+		var err error
+		body, err = DecodeExpr(raw[1])
+		if err != nil {
+			return nil, fmt.Errorf("capnweb: response body: %w", err)
+		}
+	}
+	var init struct {
+		Status     int         `json:"status"`
+		StatusText string      `json:"statusText"`
+		Headers    [][2]string `json:"headers"`
+	}
+	if err := json.Unmarshal(raw[2], &init); err != nil {
+		return nil, fmt.Errorf("capnweb: response init: %w", err)
+	}
+	resp := ResponseExpr{Status: init.Status, StatusText: init.StatusText, Body: body}
+	if init.Headers != nil {
+		resp.Headers = pairsToHeader(init.Headers)
+	}
+	return resp, nil
+}
+
+func decodeRemapExpr(raw []json.RawMessage) (Expr, error) {
+	if len(raw) < 5 {
+		return nil, fmt.Errorf("capnweb: remap: need 5 elements, got %d", len(raw))
+	}
+	var id int64
+	if err := decodeInt64(raw[1], &id); err != nil {
+		return nil, fmt.Errorf("capnweb: remap id: %w", err)
+	}
+	var path []string
+	if err := json.Unmarshal(raw[2], &path); err != nil {
+		return nil, fmt.Errorf("capnweb: remap path: %w", err)
+	}
+	caps, err := decodeExprSlice(raw[3])
+	if err != nil {
+		return nil, fmt.Errorf("capnweb: remap captures: %w", err)
+	}
+	instrs, err := decodeExprSlice(raw[4])
+	if err != nil {
+		return nil, fmt.Errorf("capnweb: remap instructions: %w", err)
+	}
+	return RemapExpr{ImportID: id, Path: path, Captures: caps, Instructions: instrs}, nil
 }
 
 // --- encoding helpers ---
@@ -640,39 +646,35 @@ func decodeRefArgs(raw []json.RawMessage) ([]Expr, error) {
 }
 
 func decodeRefAsImport(raw []json.RawMessage) (Expr, error) {
-	if len(raw) < 2 {
-		return nil, fmt.Errorf("capnweb: import: missing id")
-	}
-	var id int64
-	if err := decodeInt64(raw[1], &id); err != nil {
-		return nil, fmt.Errorf("capnweb: import id: %w", err)
-	}
-	path, err := decodeRefPath(raw)
+	id, path, args, err := decodeRefFields("import", raw)
 	if err != nil {
 		return nil, err
-	}
-	args, err := decodeRefArgs(raw)
-	if err != nil {
-		return nil, fmt.Errorf("capnweb: import args: %w", err)
 	}
 	return ImportExpr{ImportID: id, Path: path, Args: args}, nil
 }
 
 func decodeRefAsPipeline(raw []json.RawMessage) (Expr, error) {
-	if len(raw) < 2 {
-		return nil, fmt.Errorf("capnweb: pipeline: missing id")
-	}
-	var id int64
-	if err := decodeInt64(raw[1], &id); err != nil {
-		return nil, fmt.Errorf("capnweb: pipeline id: %w", err)
-	}
-	path, err := decodeRefPath(raw)
+	id, path, args, err := decodeRefFields("pipeline", raw)
 	if err != nil {
 		return nil, err
 	}
-	args, err := decodeRefArgs(raw)
-	if err != nil {
-		return nil, fmt.Errorf("capnweb: pipeline args: %w", err)
-	}
 	return PipelineExpr{ImportID: id, Path: path, Args: args}, nil
+}
+
+func decodeRefFields(tag string, raw []json.RawMessage) (id int64, path []string, args []Expr, err error) {
+	if len(raw) < 2 {
+		err = fmt.Errorf("capnweb: %s: missing id", tag)
+		return
+	}
+	if err = decodeInt64(raw[1], &id); err != nil {
+		err = fmt.Errorf("capnweb: %s id: %w", tag, err)
+		return
+	}
+	if path, err = decodeRefPath(raw); err != nil {
+		return
+	}
+	if args, err = decodeRefArgs(raw); err != nil {
+		err = fmt.Errorf("capnweb: %s args: %w", tag, err)
+	}
+	return
 }

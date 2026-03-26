@@ -1,0 +1,93 @@
+version: "2"
+
+linters:
+  enable:
+    # Security
+    - gosec
+
+    # Complexity
+    - cyclop
+    - gocognit
+    - gocyclo
+    - funlen
+    - nestif
+
+    # Style & modernization
+    - gocritic
+    - revive
+    - unconvert
+    - unparam
+    - usestdlibvars
+    - copyloopvar
+
+    # Bugs & correctness
+    - errcheck
+    - govet
+    - staticcheck
+    - ineffassign
+    - bodyclose
+    - nilerr
+    - prealloc
+
+    # Duplication & dead code
+    - dupl
+    - unused
+
+    # Misc
+    - misspell
+    - noctx
+    - whitespace
+    - wastedassign
+
+  settings:
+    cyclop:
+      max-complexity: 25
+    gocognit:
+      min-complexity: 20
+    gocyclo:
+      min-complexity: 25
+    funlen:
+      lines: 60
+      statements: 40
+    nestif:
+      min-complexity: 5
+    dupl:
+      threshold: 100
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+        - performance
+    revive:
+      rules:
+        - name: exported
+          disabled: true
+
+  exclusions:
+    presets:
+      - std-error-handling
+    paths:
+      - _test\.go$
+      - interop/
+    rules:
+      # Type-dispatch functions (pure switch on type) are inherently wide.
+      - linters: [funlen, cyclop, gocyclo, gocognit]
+        text: "EncodeExpr|decodeTaggedExpr|unmarshalTaggedMessage"
+      # Allow long functions in tests.
+      - linters: [funlen, gocognit, gocyclo, cyclop, dupl]
+        path: _test\.go$
+      # Allow unchecked errors in tests.
+      - linters: [errcheck, noctx]
+        path: _test\.go$
+      # Allow gosec in tests.
+      - linters: [gosec]
+        path: _test\.go$
+
+output:
+  formats:
+    text:
+      print-linter-name: true
+
+formatters:
+  enable:
+    - goimports

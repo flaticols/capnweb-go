@@ -158,7 +158,7 @@ func (t *ExportTable) Get(id int64) *ExportEntry {
 
 // HandleRelease decrements the refcount for an export by the given amount.
 // If the refcount reaches zero, the entry is removed and true is returned.
-func (t *ExportTable) HandleRelease(id int64, refcount int64) bool {
+func (t *ExportTable) HandleRelease(id, refcount int64) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
