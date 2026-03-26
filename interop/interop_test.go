@@ -54,12 +54,12 @@ func TestInteropTSClient(t *testing.T) {
 			return
 		}
 		sess := capnweb.NewSession(tr, svc)
-		sess.Run(r.Context())
+		_ = sess.Run(r.Context())
 	})
 
 	server := &http.Server{Addr: "127.0.0.1:8089", Handler: mux}
-	go server.ListenAndServe()
-	defer server.Shutdown(context.Background())
+	go func() { _ = server.ListenAndServe() }()
+	defer func() { _ = server.Shutdown(context.Background()) }()
 
 	// Give server time to start.
 	time.Sleep(100 * time.Millisecond)

@@ -50,7 +50,7 @@ func TestBatchHandlerSingleCall(t *testing.T) {
 	for _, msg := range msgs {
 		if rm, ok := msg.(ResolveMsg); ok {
 			var val string
-			json.Unmarshal(rm.Expr, &val)
+			_ = json.Unmarshal(rm.Expr, &val)
 			if val == "Hello, World!" {
 				found = true
 			}
@@ -151,7 +151,7 @@ func TestBatchClient(t *testing.T) {
 	for _, msg := range resp {
 		if rm, ok := msg.(ResolveMsg); ok {
 			var val string
-			json.Unmarshal(rm.Expr, &val)
+			_ = json.Unmarshal(rm.Expr, &val)
 			if val == "Hello, Bob!" {
 				found = true
 			}
