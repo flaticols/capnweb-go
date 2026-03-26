@@ -349,11 +349,13 @@ func (s *Session) dispatchCall(exportID int64, path []string, args []Expr) (any,
 	}
 	for i, arg := range args {
 		goVal := s.exprToValue(arg)
-		if paramIdx+i < mt.NumIn() {
-			callArgs = append(callArgs, coerceArg(goVal, mt.In(paramIdx+i)))
-		} else if mt.IsVariadic() && paramIdx+i >= mt.NumIn()-1 {
+		idx := paramIdx + i
+		switch {
+		case idx < mt.NumIn():
+			callArgs = append(callArgs, coerceArg(goVal, mt.In(idx)))
+		case mt.IsVariadic():
 			callArgs = append(callArgs, coerceArg(goVal, mt.In(mt.NumIn()-1).Elem()))
-		} else {
+		default:
 			callArgs = append(callArgs, reflect.ValueOf(goVal))
 		}
 	}

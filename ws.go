@@ -28,7 +28,10 @@ func WSDial(ctx context.Context, url string, opts *WSDialOptions) (*WSTransport,
 	if opts != nil && opts.HTTPClient != nil {
 		dialOpts = &websocket.DialOptions{HTTPClient: opts.HTTPClient}
 	}
-	conn, _, err := websocket.Dial(ctx, url, dialOpts)
+	conn, resp, err := websocket.Dial(ctx, url, dialOpts)
+	if resp != nil && resp.Body != nil {
+		_ = resp.Body.Close()
+	}
 	if err != nil {
 		return nil, fmt.Errorf("capnweb: ws dial: %w", err)
 	}

@@ -28,6 +28,26 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.26'
-      - uses: golangci/golangci-lint-action@v6
+      - run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+      - run: golangci-lint run ./...
+
+  interop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          version: latest
+          repository: cloudflare/capnweb
+          path: capnweb-ref
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: cd interop/ts && npm install
+      - name: Run interop tests
+        env:
+          CAPNWEB_INTEROP: "1"
+          CAPNWEB_PATH: ${{ github.workspace }}/capnweb-ref
+        run: cd interop && go test -v -race -timeout 60s ./...

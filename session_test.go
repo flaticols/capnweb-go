@@ -80,8 +80,8 @@ func TestSessionCallResolve(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	go server.Run(ctx)
-	go client.Run(ctx)
+	go func() { _ = server.Run(ctx) }()
+	go func() { _ = client.Run(ctx) }()
 
 	result, err := client.Call(ctx, 0, "Greet", "World")
 	if err != nil {
@@ -100,8 +100,8 @@ func TestSessionCallAdd(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	go server.Run(ctx)
-	go client.Run(ctx)
+	go func() { _ = server.Run(ctx) }()
+	go func() { _ = client.Run(ctx) }()
 
 	result, err := client.Call(ctx, 0, "Add", 3.0, 4.0)
 	if err != nil {
@@ -120,8 +120,8 @@ func TestSessionCallReject(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	go server.Run(ctx)
-	go client.Run(ctx)
+	go func() { _ = server.Run(ctx) }()
+	go func() { _ = client.Run(ctx) }()
 
 	_, err := client.Call(ctx, 0, "Fail")
 	if err == nil {
@@ -140,8 +140,8 @@ func TestSessionCallMethodNotFound(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	go server.Run(ctx)
-	go client.Run(ctx)
+	go func() { _ = server.Run(ctx) }()
+	go func() { _ = client.Run(ctx) }()
 
 	_, err := client.Call(ctx, 0, "NonExistent")
 	if err == nil {
@@ -160,8 +160,8 @@ func TestSessionMultipleConcurrentCalls(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	go server.Run(ctx)
-	go client.Run(ctx)
+	go func() { _ = server.Run(ctx) }()
+	go func() { _ = client.Run(ctx) }()
 
 	const n = 20
 	var wg sync.WaitGroup
@@ -196,13 +196,13 @@ func TestSessionAbort(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	go server.Run(ctx)
-	go client.Run(ctx)
+	go func() { _ = server.Run(ctx) }()
+	go func() { _ = client.Run(ctx) }()
 
 	// Wait for sessions to start.
 	time.Sleep(10 * time.Millisecond)
 
-	server.Abort(errors.New("fatal error"))
+	_ = server.Abort(errors.New("fatal error"))
 
 	// Client's Run should exit due to the abort message.
 	select {
@@ -240,11 +240,11 @@ func TestSessionStream(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	go server.Run(ctx)
+	go func() { _ = server.Run(ctx) }()
 
 	// Send a stream message directly (auto-pulled, auto-released).
 	expr, _ := json.Marshal([]any{"import", 0, "Echo", []any{42}})
-	clientTr.Send(ctx, StreamMsg{Expr: expr})
+	_ = clientTr.Send(ctx, StreamMsg{Expr: expr})
 
 	// Server should send a resolve back.
 	msg, err := clientTr.Recv(ctx)

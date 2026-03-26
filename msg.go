@@ -95,21 +95,21 @@ func MarshalMessage(m Message) ([]byte, error) {
 	var arr []any
 	switch v := m.(type) {
 	case PushMsg:
-		arr = []any{"push", json.RawMessage(v.Expr)}
+		arr = []any{"push", v.Expr}
 	case PullMsg:
 		arr = []any{"pull", v.ImportID}
 	case ResolveMsg:
-		arr = []any{"resolve", v.ExportID, json.RawMessage(v.Expr)}
+		arr = []any{"resolve", v.ExportID, v.Expr}
 	case RejectMsg:
-		arr = []any{"reject", v.ExportID, json.RawMessage(v.Expr)}
+		arr = []any{"reject", v.ExportID, v.Expr}
 	case ReleaseMsg:
 		arr = []any{"release", v.ImportID, v.RefCount}
 	case StreamMsg:
-		arr = []any{"stream", json.RawMessage(v.Expr)}
+		arr = []any{"stream", v.Expr}
 	case PipeMsg:
 		arr = []any{"pipe"}
 	case AbortMsg:
-		arr = []any{"abort", json.RawMessage(v.Expr)}
+		arr = []any{"abort", v.Expr}
 	default:
 		return nil, fmt.Errorf("capnweb: unknown message type %T", m)
 	}
@@ -125,84 +125,85 @@ func UnmarshalMessage(data []byte) (Message, error) {
 	if len(raw) == 0 {
 		return nil, fmt.Errorf("capnweb: empty message array")
 	}
-
 	var tag string
 	if err := json.Unmarshal(raw[0], &tag); err != nil {
 		return nil, fmt.Errorf("capnweb: message type must be a string: %w", err)
 	}
+	return unmarshalTaggedMessage(tag, raw)
+}
 
+func unmarshalTaggedMessage(tag string, raw []json.RawMessage) (Message, error) {
 	switch tag {
 	case "push":
-		if len(raw) != 2 {
-			return nil, fmt.Errorf("capnweb: push message requires 2 elements, got %d", len(raw))
-		}
-		return PushMsg{Expr: raw[1]}, nil
-
+		return unmarshalExprMsg(raw, "push", func(e json.RawMessage) Message { return PushMsg{Expr: e} })
 	case "pull":
-		if len(raw) != 2 {
-			return nil, fmt.Errorf("capnweb: pull message requires 2 elements, got %d", len(raw))
-		}
-		id, err := unmarshalInt64(raw[1], "pull importId")
-		if err != nil {
-			return nil, err
-		}
-		return PullMsg{ImportID: id}, nil
-
+		return unmarshalIDMsg(raw, "pull", "importId", func(id int64) Message { return PullMsg{ImportID: id} })
 	case "resolve":
-		if len(raw) != 3 {
-			return nil, fmt.Errorf("capnweb: resolve message requires 3 elements, got %d", len(raw))
-		}
-		id, err := unmarshalInt64(raw[1], "resolve exportId")
-		if err != nil {
-			return nil, err
-		}
-		return ResolveMsg{ExportID: id, Expr: raw[2]}, nil
-
+		return unmarshalIDExprMsg(raw, "resolve", "exportId", func(id int64, e json.RawMessage) Message {
+			return ResolveMsg{ExportID: id, Expr: e}
+		})
 	case "reject":
-		if len(raw) != 3 {
-			return nil, fmt.Errorf("capnweb: reject message requires 3 elements, got %d", len(raw))
-		}
-		id, err := unmarshalInt64(raw[1], "reject exportId")
-		if err != nil {
-			return nil, err
-		}
-		return RejectMsg{ExportID: id, Expr: raw[2]}, nil
-
+		return unmarshalIDExprMsg(raw, "reject", "exportId", func(id int64, e json.RawMessage) Message {
+			return RejectMsg{ExportID: id, Expr: e}
+		})
 	case "release":
-		if len(raw) != 3 {
-			return nil, fmt.Errorf("capnweb: release message requires 3 elements, got %d", len(raw))
-		}
-		id, err := unmarshalInt64(raw[1], "release importId")
-		if err != nil {
-			return nil, err
-		}
-		rc, err := unmarshalInt64(raw[2], "release refcount")
-		if err != nil {
-			return nil, err
-		}
-		return ReleaseMsg{ImportID: id, RefCount: rc}, nil
-
+		return unmarshalReleaseMsg(raw)
 	case "stream":
-		if len(raw) != 2 {
-			return nil, fmt.Errorf("capnweb: stream message requires 2 elements, got %d", len(raw))
-		}
-		return StreamMsg{Expr: raw[1]}, nil
-
+		return unmarshalExprMsg(raw, "stream", func(e json.RawMessage) Message { return StreamMsg{Expr: e} })
 	case "pipe":
 		if len(raw) != 1 {
 			return nil, fmt.Errorf("capnweb: pipe message requires 1 element, got %d", len(raw))
 		}
 		return PipeMsg{}, nil
-
 	case "abort":
-		if len(raw) != 2 {
-			return nil, fmt.Errorf("capnweb: abort message requires 2 elements, got %d", len(raw))
-		}
-		return AbortMsg{Expr: raw[1]}, nil
-
+		return unmarshalExprMsg(raw, "abort", func(e json.RawMessage) Message { return AbortMsg{Expr: e} })
 	default:
 		return nil, fmt.Errorf("capnweb: unknown message type %q", tag)
 	}
+}
+
+func unmarshalExprMsg(raw []json.RawMessage, tag string, make_ func(json.RawMessage) Message) (Message, error) {
+	if len(raw) != 2 {
+		return nil, fmt.Errorf("capnweb: %s message requires 2 elements, got %d", tag, len(raw))
+	}
+	return make_(raw[1]), nil
+}
+
+func unmarshalIDMsg(raw []json.RawMessage, tag, field string, make_ func(int64) Message) (Message, error) {
+	if len(raw) != 2 {
+		return nil, fmt.Errorf("capnweb: %s message requires 2 elements, got %d", tag, len(raw))
+	}
+	id, err := unmarshalInt64(raw[1], tag+" "+field)
+	if err != nil {
+		return nil, err
+	}
+	return make_(id), nil
+}
+
+func unmarshalIDExprMsg(raw []json.RawMessage, tag, field string, make_ func(int64, json.RawMessage) Message) (Message, error) {
+	if len(raw) != 3 {
+		return nil, fmt.Errorf("capnweb: %s message requires 3 elements, got %d", tag, len(raw))
+	}
+	id, err := unmarshalInt64(raw[1], tag+" "+field)
+	if err != nil {
+		return nil, err
+	}
+	return make_(id, raw[2]), nil
+}
+
+func unmarshalReleaseMsg(raw []json.RawMessage) (Message, error) {
+	if len(raw) != 3 {
+		return nil, fmt.Errorf("capnweb: release message requires 3 elements, got %d", len(raw))
+	}
+	id, err := unmarshalInt64(raw[1], "release importId")
+	if err != nil {
+		return nil, err
+	}
+	rc, err := unmarshalInt64(raw[2], "release refcount")
+	if err != nil {
+		return nil, err
+	}
+	return ReleaseMsg{ImportID: id, RefCount: rc}, nil
 }
 
 func unmarshalInt64(data json.RawMessage, field string) (int64, error) {

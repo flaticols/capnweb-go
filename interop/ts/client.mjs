@@ -1,0 +1,130 @@
+// Interop test client using raw protocol messages.
+// Validates wire format correctness against any server.
+//
+// Set METHOD_CASE=lower for TS servers (greet), upper for Go servers (Greet).
+// Default: upper (Go).
+
+import { describe, it, before, after } from "node:test";
+import assert from "node:assert/strict";
+import WebSocket from "ws";
+
+const SERVER_URL = process.env.CAPNWEB_SERVER_URL || "ws://localhost:8089/ws";
+const LOWER = process.env.METHOD_CASE === "lower";
+
+const methods = {
+  greet: LOWER ? "greet" : "Greet",
+  add: LOWER ? "add" : "Add",
+  echo: LOWER ? "echo" : "Echo",
+  fail: LOWER ? "fail" : "Fail",
+  doesNotExist: LOWER ? "doesNotExist" : "DoesNotExist",
+};
+
+function send(ws, msg) {
+  ws.send(JSON.stringify(msg));
+}
+
+function recv(ws) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error("timeout")), 5000);
+    ws.once("message", (data) => {
+      clearTimeout(timeout);
+      resolve(JSON.parse(data.toString()));
+    });
+  });
+}
+
+function connect(url) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(url);
+    ws.on("open", () => resolve(ws));
+    ws.on("error", (err) => reject(err));
+  });
+}
+
+describe("server interop", () => {
+  let ws;
+  let nextId = 1;
+
+  before(async () => {
+    ws = await connect(SERVER_URL);
+  });
+
+  after(() => {
+    if (ws) ws.close();
+  });
+
+  it("greet returns greeting string", async () => {
+    const id = nextId++;
+    send(ws, ["push", ["import", 0, methods.greet, ["World"]]]);
+    send(ws, ["pull", id]);
+
+    const msg = await recv(ws);
+    assert.equal(msg[0], "resolve");
+    assert.equal(msg[1], id);
+    assert.equal(msg[2], "Hello, World!");
+
+    send(ws, ["release", id, 1]);
+  });
+
+  it("add returns numeric sum", async () => {
+    const id = nextId++;
+    send(ws, ["push", ["import", 0, methods.add, [10, 32]]]);
+    send(ws, ["pull", id]);
+
+    const msg = await recv(ws);
+    assert.equal(msg[0], "resolve");
+    assert.equal(msg[1], id);
+    assert.equal(msg[2], 42);
+
+    send(ws, ["release", id, 1]);
+  });
+
+  it("echo returns various types unchanged", async () => {
+    const cases = [
+      { input: "hello", expected: "hello" },
+      { input: 42, expected: 42 },
+      { input: true, expected: true },
+      { input: null, expected: null },
+      { input: { key: "value" }, expected: { key: "value" } },
+    ];
+
+    for (const { input, expected } of cases) {
+      const id = nextId++;
+      send(ws, ["push", ["import", 0, methods.echo, [input]]]);
+      send(ws, ["pull", id]);
+
+      const msg = await recv(ws);
+      assert.equal(msg[0], "resolve", `expected resolve for ${JSON.stringify(input)}`);
+      assert.equal(msg[1], id);
+      assert.deepEqual(msg[2], expected);
+
+      send(ws, ["release", id, 1]);
+    }
+  });
+
+  it("fail returns reject with error", async () => {
+    const id = nextId++;
+    send(ws, ["push", ["import", 0, methods.fail, []]]);
+    send(ws, ["pull", id]);
+
+    const msg = await recv(ws);
+    assert.equal(msg[0], "reject");
+    assert.equal(msg[1], id);
+    assert.equal(msg[2][0], "error");
+    assert.ok(msg[2][2].includes("intentional error"));
+
+    send(ws, ["release", id, 1]);
+  });
+
+  it("unknown method returns reject", async () => {
+    const id = nextId++;
+    send(ws, ["push", ["import", 0, methods.doesNotExist, []]]);
+    send(ws, ["pull", id]);
+
+    const msg = await recv(ws);
+    assert.equal(msg[0], "reject");
+    assert.equal(msg[1], id);
+
+    send(ws, ["release", id, 1]);
+  });
+});

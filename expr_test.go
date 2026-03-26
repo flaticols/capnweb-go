@@ -127,7 +127,7 @@ func TestEncodeExprRequest(t *testing.T) {
 	}
 
 	var tag string
-	json.Unmarshal(arr[0], &tag)
+	_ = json.Unmarshal(arr[0], &tag)
 	if tag != "request" {
 		t.Fatalf("tag = %q, want request", tag)
 	}
@@ -165,7 +165,7 @@ func TestEncodeExprResponse(t *testing.T) {
 	}
 
 	var tag string
-	json.Unmarshal(arr[0], &tag)
+	_ = json.Unmarshal(arr[0], &tag)
 	if tag != "response" {
 		t.Fatalf("tag = %q", tag)
 	}
