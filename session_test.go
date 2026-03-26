@@ -1,0 +1,263 @@
+package capnweb
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+)
+
+// chanTransport is a simple in-memory Transport for testing.
+type chanTransport struct {
+	send chan Message
+	recv chan Message
+	done chan struct{}
+	once sync.Once
+}
+
+func newChanTransportPair() (*chanTransport, *chanTransport) {
+	ab := make(chan Message, 64)
+	ba := make(chan Message, 64)
+	a := &chanTransport{send: ab, recv: ba, done: make(chan struct{})}
+	b := &chanTransport{send: ba, recv: ab, done: make(chan struct{})}
+	return a, b
+}
+
+func (t *chanTransport) Send(ctx context.Context, msg Message) error {
+	select {
+	case t.send <- msg:
+		return nil
+	case <-t.done:
+		return errors.New("transport closed")
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (t *chanTransport) Recv(ctx context.Context) (Message, error) {
+	select {
+	case msg := <-t.recv:
+		return msg, nil
+	case <-t.done:
+		return nil, errors.New("transport closed")
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (t *chanTransport) Close() error {
+	t.once.Do(func() { close(t.done) })
+	return nil
+}
+
+// testService is a bootstrap object for testing.
+type testService struct{}
+
+func (s *testService) Echo(_ context.Context, val any) (any, error) {
+	return val, nil
+}
+
+func (s *testService) Add(_ context.Context, a, b float64) (float64, error) {
+	return a + b, nil
+}
+
+func (s *testService) Greet(_ context.Context, name string) (string, error) {
+	return "Hello, " + name + "!", nil
+}
+
+func (s *testService) Fail(_ context.Context) (any, error) {
+	return nil, errors.New("intentional error")
+}
+
+func TestSessionCallResolve(t *testing.T) {
+	clientTr, serverTr := newChanTransportPair()
+	server := NewSession(serverTr, &testService{})
+	client := NewSession(clientTr, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	go server.Run(ctx)
+	go client.Run(ctx)
+
+	result, err := client.Call(ctx, 0, "Greet", "World")
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if result != "Hello, World!" {
+		t.Fatalf("result = %v; want Hello, World!", result)
+	}
+}
+
+func TestSessionCallAdd(t *testing.T) {
+	clientTr, serverTr := newChanTransportPair()
+	server := NewSession(serverTr, &testService{})
+	client := NewSession(clientTr, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	go server.Run(ctx)
+	go client.Run(ctx)
+
+	result, err := client.Call(ctx, 0, "Add", 3.0, 4.0)
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if result != 7.0 {
+		t.Fatalf("result = %v; want 7", result)
+	}
+}
+
+func TestSessionCallReject(t *testing.T) {
+	clientTr, serverTr := newChanTransportPair()
+	server := NewSession(serverTr, &testService{})
+	client := NewSession(clientTr, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	go server.Run(ctx)
+	go client.Run(ctx)
+
+	_, err := client.Call(ctx, 0, "Fail")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "intentional error") {
+		t.Fatalf("error = %v; want 'intentional error'", err)
+	}
+}
+
+func TestSessionCallMethodNotFound(t *testing.T) {
+	clientTr, serverTr := newChanTransportPair()
+	server := NewSession(serverTr, &testService{})
+	client := NewSession(clientTr, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	go server.Run(ctx)
+	go client.Run(ctx)
+
+	_, err := client.Call(ctx, 0, "NonExistent")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("error = %v; want 'not found'", err)
+	}
+}
+
+func TestSessionMultipleConcurrentCalls(t *testing.T) {
+	clientTr, serverTr := newChanTransportPair()
+	server := NewSession(serverTr, &testService{})
+	client := NewSession(clientTr, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	go server.Run(ctx)
+	go client.Run(ctx)
+
+	const n = 20
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	results := make([]any, n)
+
+	for i := range n {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			results[idx], errs[idx] = client.Call(ctx, 0, "Add", float64(idx), 1.0)
+		}(i)
+	}
+	wg.Wait()
+
+	for i := range n {
+		if errs[i] != nil {
+			t.Fatalf("call %d: %v", i, errs[i])
+		}
+		want := float64(i) + 1.0
+		if results[i] != want {
+			t.Fatalf("call %d: result = %v; want %v", i, results[i], want)
+		}
+	}
+}
+
+func TestSessionAbort(t *testing.T) {
+	clientTr, serverTr := newChanTransportPair()
+	server := NewSession(serverTr, &testService{})
+	client := NewSession(clientTr, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	go server.Run(ctx)
+	go client.Run(ctx)
+
+	// Wait for sessions to start.
+	time.Sleep(10 * time.Millisecond)
+
+	server.Abort(errors.New("fatal error"))
+
+	// Client's Run should exit due to the abort message.
+	select {
+	case <-client.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("client session did not terminate after abort")
+	}
+}
+
+func TestSessionContextCancel(t *testing.T) {
+	_, serverTr := newChanTransportPair()
+	server := NewSession(serverTr, &testService{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- server.Run(ctx) }()
+
+	// Give Run a moment to start.
+	time.Sleep(10 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-errCh:
+		// Good — Run returned.
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after context cancel")
+	}
+}
+
+func TestSessionStream(t *testing.T) {
+	clientTr, serverTr := newChanTransportPair()
+	server := NewSession(serverTr, &testService{})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	go server.Run(ctx)
+
+	// Send a stream message directly (auto-pulled, auto-released).
+	expr, _ := json.Marshal([]any{"import", 0, "Echo", []any{42}})
+	clientTr.Send(ctx, StreamMsg{Expr: expr})
+
+	// Server should send a resolve back.
+	msg, err := clientTr.Recv(ctx)
+	if err != nil {
+		t.Fatalf("recv: %v", err)
+	}
+	resolve, ok := msg.(ResolveMsg)
+	if !ok {
+		t.Fatalf("expected ResolveMsg, got %T", msg)
+	}
+	var val any
+	json.Unmarshal(resolve.Expr, &val)
+	if val != 42.0 {
+		t.Fatalf("result = %v; want 42", val)
+	}
+}
