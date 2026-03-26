@@ -83,11 +83,6 @@ linters:
       - linters: [gosec]
         path: _test\.go$
 
-output:
-  formats:
-    text:
-      print-linter-name: true
-
 formatters:
   enable:
     - goimports

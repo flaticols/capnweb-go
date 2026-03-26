@@ -86,7 +86,7 @@ func startTSServer(t *testing.T) *tsServerProc {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	t.Cleanup(cancel)
 
-	cmd := exec.CommandContext(ctx, "node", "--experimental-strip-types", "server.mjs")
+	cmd := exec.CommandContext(ctx, "npx", "tsx", "server.mjs")
 	cmd.Dir = "ts"
 	cmd.Env = append(os.Environ(),
 		"CAPNWEB_PATH="+capnwebPath,
