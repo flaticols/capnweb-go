@@ -82,7 +82,3 @@ linters:
       # Allow gosec in tests.
       - linters: [gosec]
         path: _test\.go$
-
-formatters:
-  enable:
-    - goimports
