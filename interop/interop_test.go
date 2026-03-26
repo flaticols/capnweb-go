@@ -15,36 +15,122 @@ import (
 	capnweb "github.com/flaticols/capnweb-go"
 )
 
-// testService is the shared bootstrap object for interop testing.
-// Both Go and TS tests call these methods.
+// testService is the Go bootstrap object, mirroring the TS TestService.
 type testService struct{}
 
-func (s *testService) Echo(_ context.Context, val any) (any, error) {
-	return val, nil
+func (s *testService) Echo(_ context.Context, val any) (any, error)          { return val, nil }
+func (s *testService) Add(_ context.Context, a, b float64) (float64, error)  { return a + b, nil }
+func (s *testService) Greet(_ context.Context, name string) (string, error)  { return "Hello, " + name + "!", nil }
+func (s *testService) Fail(_ context.Context) (any, error)                   { return nil, errors.New("intentional error") }
+
+// --- Test matrix ---
+//
+//   Server  │  Client  │  What it proves
+//   ────────┼──────────┼──────────────────────────────
+//   TS      │  TS      │  Baseline (reference behavior)
+//   Go      │  TS      │  Go server behaves like TS server
+//   TS      │  Go      │  Go client behaves like TS client
+
+// TestTSServerTSClient is the baseline: TS server ↔ TS client.
+// If this fails, the reference implementation is broken (not us).
+func TestTSServerTSClient(t *testing.T) {
+	requireInterop(t)
+	tsServer := startTSServer(t)
+	defer tsServer.stop()
+
+	runTSClient(t, tsServer.wsURL(), "lower")
 }
 
-func (s *testService) Add(_ context.Context, a, b float64) (float64, error) {
-	return a + b, nil
+// TestGoServerTSClient validates the Go server produces identical
+// responses to the TS server.
+func TestGoServerTSClient(t *testing.T) {
+	requireInterop(t)
+	goServer := startGoServer(t, "127.0.0.1:8089")
+	defer goServer.stop()
+
+	runTSClient(t, "ws://127.0.0.1:8089/ws", "upper")
 }
 
-func (s *testService) Greet(_ context.Context, name string) (string, error) {
-	return "Hello, " + name + "!", nil
+// TestTSServerGoClient validates the Go client interprets TS server
+// responses identically to the TS client.
+func TestTSServerGoClient(t *testing.T) {
+	requireInterop(t)
+	tsServer := startTSServer(t)
+	defer tsServer.stop()
+
+	runGoClient(t, tsServer.wsURL())
 }
 
-func (s *testService) Fail(_ context.Context) (any, error) {
-	return nil, errors.New("intentional error")
+// --- TS server ---
+
+type tsServerProc struct {
+	cmd  *exec.Cmd
+	port string
 }
 
-// TestInteropTSClient starts a Go WebSocket server, runs the TS test client
-// against it, and reports the results (wire format validation).
-func TestInteropTSClient(t *testing.T) {
-	if os.Getenv("CAPNWEB_INTEROP") == "" {
-		t.Skip("skipping interop test (set CAPNWEB_INTEROP=1 to run)")
+func (s *tsServerProc) wsURL() string { return fmt.Sprintf("ws://127.0.0.1:%s", s.port) }
+func (s *tsServerProc) stop() {
+	_ = s.cmd.Process.Kill()
+	_ = s.cmd.Wait()
+}
+
+func startTSServer(t *testing.T) *tsServerProc {
+	t.Helper()
+	capnwebPath := os.Getenv("CAPNWEB_PATH")
+	if capnwebPath == "" {
+		t.Skip("CAPNWEB_PATH not set")
 	}
-	if _, err := exec.LookPath("node"); err != nil {
-		t.Skip("node not found")
+
+	npmInstall(t, "ts")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	t.Cleanup(cancel)
+
+	cmd := exec.CommandContext(ctx, "node", "--experimental-strip-types", "server.mjs")
+	cmd.Dir = "ts"
+	cmd.Env = append(os.Environ(),
+		"CAPNWEB_PATH="+capnwebPath,
+		"PORT=0", // let OS pick a port — we'll parse from READY line
+	)
+	cmd.Stderr = os.Stderr
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start TS server: %v", err)
 	}
 
+	scanner := bufio.NewScanner(stdout)
+	var port string
+	for scanner.Scan() {
+		if p, ok := strings.CutPrefix(scanner.Text(), "READY:"); ok {
+			port = p
+			break
+		}
+	}
+	if port == "" {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		t.Fatal("TS server did not become ready")
+	}
+
+	return &tsServerProc{cmd: cmd, port: port}
+}
+
+// --- Go server ---
+
+type goServerHandle struct {
+	server *http.Server
+}
+
+func (h *goServerHandle) stop() {
+	_ = h.server.Shutdown(context.Background())
+}
+
+func startGoServer(t *testing.T, addr string) *goServerHandle {
+	t.Helper()
 	svc := &testService{}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
@@ -57,16 +143,24 @@ func TestInteropTSClient(t *testing.T) {
 		_ = sess.Run(r.Context())
 	})
 
-	server := &http.Server{Addr: "127.0.0.1:8089", Handler: mux}
+	server := &http.Server{Addr: addr, Handler: mux}
 	go func() { _ = server.ListenAndServe() }()
-	defer func() { _ = server.Shutdown(context.Background()) }()
 	time.Sleep(100 * time.Millisecond)
+	return &goServerHandle{server: server}
+}
 
+// --- TS client runner ---
+
+func runTSClient(t *testing.T, serverURL, methodCase string) {
+	t.Helper()
 	npmInstall(t, "ts")
 
 	cmd := exec.Command("node", "--test", "client.mjs")
 	cmd.Dir = "ts"
-	cmd.Env = append(os.Environ(), "CAPNWEB_SERVER_URL=ws://127.0.0.1:8089/ws")
+	cmd.Env = append(os.Environ(),
+		"CAPNWEB_SERVER_URL="+serverURL,
+		"METHOD_CASE="+methodCase,
+	)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -74,118 +168,84 @@ func TestInteropTSClient(t *testing.T) {
 	}
 }
 
-// TestInteropGoClient starts a TS server (using the reference capnweb
-// implementation) and connects a Go client to it (behavioral validation).
-func TestInteropGoClient(t *testing.T) {
-	if os.Getenv("CAPNWEB_INTEROP") == "" {
-		t.Skip("skipping interop test (set CAPNWEB_INTEROP=1 to run)")
-	}
-	capnwebPath := os.Getenv("CAPNWEB_PATH")
-	if capnwebPath == "" {
-		t.Skip("CAPNWEB_PATH not set (should point to cloudflare/capnweb checkout)")
-	}
-	if _, err := exec.LookPath("node"); err != nil {
-		t.Skip("node not found")
-	}
+// --- Go client runner ---
 
-	npmInstall(t, "ts")
+func runGoClient(t *testing.T, serverURL string) {
+	t.Helper()
 
-	// Start the TS server and wait for the READY signal.
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "node", "--experimental-strip-types", "server.mjs")
-	cmd.Dir = "ts"
-	cmd.Env = append(os.Environ(),
-		"CAPNWEB_PATH="+capnwebPath,
-		"PORT=8090",
-	)
-	cmd.Stderr = os.Stderr
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start TS server: %v", err)
-	}
-	defer func() {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
-	}()
-
-	// Wait for "READY:<port>" line.
-	scanner := bufio.NewScanner(stdout)
-	var port string
-	for scanner.Scan() {
-		line := scanner.Text()
-		if p, ok := strings.CutPrefix(line, "READY:"); ok {
-			port = p
-			break
-		}
-	}
-	if port == "" {
-		t.Fatal("TS server did not become ready")
-	}
-
-	// Connect Go client to TS server.
-	wsURL := fmt.Sprintf("ws://127.0.0.1:%s", port)
-	tr, err := capnweb.WSDial(ctx, wsURL, nil)
+	tr, err := capnweb.WSDial(ctx, serverURL, nil)
 	if err != nil {
 		t.Fatalf("WSDial: %v", err)
 	}
 
 	client := capnweb.NewSession(tr, nil)
 	go func() { _ = client.Run(ctx) }()
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
-	// Test: Greet
-	t.Run("Greet", func(t *testing.T) {
+	// TS server uses lowercase method names.
+	t.Run("greet", func(t *testing.T) {
 		result, err := client.Call(ctx, 0, "greet", "World")
 		if err != nil {
-			t.Fatalf("Call greet: %v", err)
+			t.Fatalf("Call: %v", err)
 		}
 		if result != "Hello, World!" {
-			t.Fatalf("greet = %v; want Hello, World!", result)
+			t.Fatalf("got %v; want Hello, World!", result)
 		}
 	})
 
-	// Test: Add
-	t.Run("Add", func(t *testing.T) {
+	t.Run("add", func(t *testing.T) {
 		result, err := client.Call(ctx, 0, "add", 10.0, 32.0)
 		if err != nil {
-			t.Fatalf("Call add: %v", err)
+			t.Fatalf("Call: %v", err)
 		}
 		if result != 42.0 {
-			t.Fatalf("add = %v; want 42", result)
+			t.Fatalf("got %v; want 42", result)
 		}
 	})
 
-	// Test: Echo
-	t.Run("Echo", func(t *testing.T) {
+	t.Run("echo", func(t *testing.T) {
 		result, err := client.Call(ctx, 0, "echo", "test")
 		if err != nil {
-			t.Fatalf("Call echo: %v", err)
+			t.Fatalf("Call: %v", err)
 		}
 		if result != "test" {
-			t.Fatalf("echo = %v; want test", result)
+			t.Fatalf("got %v; want test", result)
 		}
 	})
 
-	// Test: Fail (expect rejection)
-	t.Run("Fail", func(t *testing.T) {
+	t.Run("fail", func(t *testing.T) {
 		_, err := client.Call(ctx, 0, "fail")
 		if err == nil {
-			t.Fatal("expected error from fail")
+			t.Fatal("expected error")
 		}
 		if !strings.Contains(err.Error(), "intentional error") {
-			t.Fatalf("error = %v; want 'intentional error'", err)
+			t.Fatalf("got %v; want 'intentional error'", err)
 		}
 	})
 }
 
+// --- helpers ---
+
+func requireInterop(t *testing.T) {
+	t.Helper()
+	if os.Getenv("CAPNWEB_INTEROP") == "" {
+		t.Skip("set CAPNWEB_INTEROP=1 to run")
+	}
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not found")
+	}
+}
+
+var npmInstalled bool
+
 func npmInstall(t *testing.T, dir string) {
 	t.Helper()
+	if npmInstalled {
+		return
+	}
 	install := exec.Command("npm", "install")
 	install.Dir = dir
 	install.Stdout = os.Stdout
@@ -193,4 +253,5 @@ func npmInstall(t *testing.T, dir string) {
 	if err := install.Run(); err != nil {
 		t.Fatalf("npm install failed: %v", err)
 	}
+	npmInstalled = true
 }

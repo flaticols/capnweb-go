@@ -1,18 +1,28 @@
-// Interop test client: connects to the Go WebSocket server and runs
-// basic RPC calls using raw capnweb protocol messages.
+// Interop test client using raw protocol messages.
+// Validates wire format correctness against any server.
+//
+// Set METHOD_CASE=lower for TS servers (greet), upper for Go servers (Greet).
+// Default: upper (Go).
 
 import { describe, it, before, after } from "node:test";
 import assert from "node:assert/strict";
 import WebSocket from "ws";
 
 const SERVER_URL = process.env.CAPNWEB_SERVER_URL || "ws://localhost:8089/ws";
+const LOWER = process.env.METHOD_CASE === "lower";
 
-/** Send a message without waiting. */
+const methods = {
+  greet: LOWER ? "greet" : "Greet",
+  add: LOWER ? "add" : "Add",
+  echo: LOWER ? "echo" : "Echo",
+  fail: LOWER ? "fail" : "Fail",
+  doesNotExist: LOWER ? "doesNotExist" : "DoesNotExist",
+};
+
 function send(ws, msg) {
   ws.send(JSON.stringify(msg));
 }
 
-/** Wait for the next message. */
 function recv(ws) {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error("timeout")), 5000);
@@ -23,7 +33,6 @@ function recv(ws) {
   });
 }
 
-/** Open a WebSocket and wait for connection. */
 function connect(url) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url);
@@ -32,8 +41,9 @@ function connect(url) {
   });
 }
 
-describe("Go server interop", () => {
+describe("server interop", () => {
   let ws;
+  let nextId = 1;
 
   before(async () => {
     ws = await connect(SERVER_URL);
@@ -43,35 +53,34 @@ describe("Go server interop", () => {
     if (ws) ws.close();
   });
 
-  it("calls Greet and receives resolve", async () => {
-    // push: call main.Greet("World") — assigned import 1
-    send(ws, ["push", ["import", 0, "Greet", ["World"]]]);
-    send(ws, ["pull", 1]);
+  it("greet returns greeting string", async () => {
+    const id = nextId++;
+    send(ws, ["push", ["import", 0, methods.greet, ["World"]]]);
+    send(ws, ["pull", id]);
 
     const msg = await recv(ws);
     assert.equal(msg[0], "resolve");
-    assert.equal(msg[1], 1);
+    assert.equal(msg[1], id);
     assert.equal(msg[2], "Hello, World!");
 
-    // release
-    send(ws, ["release", 1, 1]);
+    send(ws, ["release", id, 1]);
   });
 
-  it("calls Add and receives numeric result", async () => {
-    // push: call main.Add(10, 32) — assigned import 2
-    send(ws, ["push", ["import", 0, "Add", [10, 32]]]);
-    send(ws, ["pull", 2]);
+  it("add returns numeric sum", async () => {
+    const id = nextId++;
+    send(ws, ["push", ["import", 0, methods.add, [10, 32]]]);
+    send(ws, ["pull", id]);
 
     const msg = await recv(ws);
     assert.equal(msg[0], "resolve");
-    assert.equal(msg[1], 2);
+    assert.equal(msg[1], id);
     assert.equal(msg[2], 42);
 
-    send(ws, ["release", 2, 1]);
+    send(ws, ["release", id, 1]);
   });
 
-  it("calls Echo with various types", async () => {
-    const testCases = [
+  it("echo returns various types unchanged", async () => {
+    const cases = [
       { input: "hello", expected: "hello" },
       { input: 42, expected: 42 },
       { input: true, expected: true },
@@ -79,45 +88,43 @@ describe("Go server interop", () => {
       { input: { key: "value" }, expected: { key: "value" } },
     ];
 
-    let importId = 3;
-    for (const { input, expected } of testCases) {
-      send(ws, ["push", ["import", 0, "Echo", [input]]]);
-      send(ws, ["pull", importId]);
+    for (const { input, expected } of cases) {
+      const id = nextId++;
+      send(ws, ["push", ["import", 0, methods.echo, [input]]]);
+      send(ws, ["pull", id]);
 
       const msg = await recv(ws);
-      assert.equal(msg[0], "resolve", `expected resolve for input ${JSON.stringify(input)}`);
-      assert.equal(msg[1], importId);
+      assert.equal(msg[0], "resolve", `expected resolve for ${JSON.stringify(input)}`);
+      assert.equal(msg[1], id);
       assert.deepEqual(msg[2], expected);
 
-      send(ws, ["release", importId, 1]);
-      importId++;
+      send(ws, ["release", id, 1]);
     }
   });
 
-  it("receives reject for method that fails", async () => {
-    const importId = 8;
-    send(ws, ["push", ["import", 0, "Fail", []]]);
-    send(ws, ["pull", importId]);
+  it("fail returns reject with error", async () => {
+    const id = nextId++;
+    send(ws, ["push", ["import", 0, methods.fail, []]]);
+    send(ws, ["pull", id]);
 
     const msg = await recv(ws);
     assert.equal(msg[0], "reject");
-    assert.equal(msg[1], importId);
-    // Error expression: ["error", type, message]
+    assert.equal(msg[1], id);
     assert.equal(msg[2][0], "error");
     assert.ok(msg[2][2].includes("intentional error"));
 
-    send(ws, ["release", importId, 1]);
+    send(ws, ["release", id, 1]);
   });
 
-  it("receives reject for unknown method", async () => {
-    const importId = 9;
-    send(ws, ["push", ["import", 0, "DoesNotExist", []]]);
-    send(ws, ["pull", importId]);
+  it("unknown method returns reject", async () => {
+    const id = nextId++;
+    send(ws, ["push", ["import", 0, methods.doesNotExist, []]]);
+    send(ws, ["pull", id]);
 
     const msg = await recv(ws);
     assert.equal(msg[0], "reject");
-    assert.equal(msg[1], importId);
+    assert.equal(msg[1], id);
 
-    send(ws, ["release", importId, 1]);
+    send(ws, ["release", id, 1]);
   });
 });

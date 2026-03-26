@@ -43,9 +43,9 @@ class ChildService extends RpcTarget {
   }
 }
 
-const PORT = parseInt(process.env.PORT || "8090", 10);
+const PORT = parseInt(process.env.PORT || "0", 10);
 
-const httpServer = http.createServer((req, res) => {
+const httpServer = http.createServer((_req, res) => {
   res.writeHead(404).end("Not Found");
 });
 
@@ -55,6 +55,6 @@ wsServer.on("connection", (ws) => {
 });
 
 httpServer.listen(PORT, "127.0.0.1", () => {
-  // Signal to the Go test that we're ready.
-  console.log(`READY:${PORT}`);
+  const actualPort = httpServer.address().port;
+  console.log(`READY:${actualPort}`);
 });
