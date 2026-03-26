@@ -1,0 +1,12 @@
+{
+  "name": "capnweb-interop-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test client.mjs"
+  },
+  "dependencies": {
+    "capnweb": "^0.1.0",
+    "ws": "^8.18.0"
+  }
+}
