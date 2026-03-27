@@ -422,37 +422,10 @@ type deferredResult struct {
 }
 
 func buildCallExpr(targetID int64, method string, args []any) (json.RawMessage, error) {
-	encodedArgs := make([]json.RawMessage, len(args))
-	for i, a := range args {
-		b, err := json.Marshal(a)
-		if err != nil {
-			return nil, fmt.Errorf("capnweb: marshal arg %d: %w", i, err)
-		}
-		encodedArgs[i] = b
-	}
-	argsJSON, err := json.Marshal(encodedArgs)
-	if err != nil {
-		return nil, fmt.Errorf("capnweb: marshal args: %w", err)
-	}
-
 	if method != "" {
-		methodJSON, _ := json.Marshal(method)
-		return json.Marshal([]json.RawMessage{
-			json.RawMessage(`"import"`),
-			mustMarshal(targetID),
-			methodJSON,
-			argsJSON,
-		})
+		return json.Marshal([]any{"import", targetID, method, args})
 	}
-	return json.Marshal([]json.RawMessage{
-		json.RawMessage(`"import"`),
-		mustMarshal(targetID),
-	})
-}
-
-func mustMarshal(v any) json.RawMessage {
-	b, _ := json.Marshal(v)
-	return b
+	return json.Marshal([]any{"import", targetID})
 }
 
 func capitalize(s string) string {
