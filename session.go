@@ -53,6 +53,28 @@ func NewSession(transport Transport, main any) *Session {
 	}
 }
 
+// Main returns a Stub for the remote's bootstrap (main) interface.
+// This is the entry point for calling methods on the remote endpoint.
+func (s *Session) Main() *Stub {
+	return newStub(s, 0)
+}
+
+// wrapImportEntry converts *ImportEntry values to *Stub. If val is not
+// an *ImportEntry, it is returned unchanged.
+func (s *Session) wrapImportEntry(val any) any {
+	if entry, ok := val.(*ImportEntry); ok {
+		return newStub(s, entry.ID)
+	}
+	if slice, ok := val.([]any); ok {
+		for i, elem := range slice {
+			if entry, ok := elem.(*ImportEntry); ok {
+				slice[i] = newStub(s, entry.ID)
+			}
+		}
+	}
+	return val
+}
+
 // Run starts the message processing loop. It blocks until the context is
 // cancelled, the transport closes, or an abort is received.
 func (s *Session) Run(ctx context.Context) error {

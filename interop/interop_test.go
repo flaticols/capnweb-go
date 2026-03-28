@@ -194,8 +194,10 @@ func runGoClient(t *testing.T, serverURL string) {
 	defer func() { _ = client.Close() }()
 
 	// TS server uses lowercase method names.
+	main := client.Main()
+
 	t.Run("greet", func(t *testing.T) {
-		result, err := client.Call(ctx, 0, "greet", "World")
+		result, err := capnweb.Call[string](ctx, main, "greet", "World")
 		if err != nil {
 			t.Fatalf("Call: %v", err)
 		}
@@ -205,7 +207,7 @@ func runGoClient(t *testing.T, serverURL string) {
 	})
 
 	t.Run("add", func(t *testing.T) {
-		result, err := client.Call(ctx, 0, "add", 10.0, 32.0)
+		result, err := capnweb.Call[float64](ctx, main, "add", 10.0, 32.0)
 		if err != nil {
 			t.Fatalf("Call: %v", err)
 		}
@@ -215,7 +217,7 @@ func runGoClient(t *testing.T, serverURL string) {
 	})
 
 	t.Run("echo", func(t *testing.T) {
-		result, err := client.Call(ctx, 0, "echo", "test")
+		result, err := capnweb.Call[string](ctx, main, "echo", "test")
 		if err != nil {
 			t.Fatalf("Call: %v", err)
 		}
@@ -225,7 +227,7 @@ func runGoClient(t *testing.T, serverURL string) {
 	})
 
 	t.Run("fail", func(t *testing.T) {
-		_, err := client.Call(ctx, 0, "fail")
+		_, err := main.Call(ctx, "fail")
 		if err == nil {
 			t.Fatal("expected error")
 		}
@@ -235,16 +237,12 @@ func runGoClient(t *testing.T, serverURL string) {
 	})
 
 	t.Run("getChild", func(t *testing.T) {
-		result, err := client.Call(ctx, 0, "getChild")
+		child, err := capnweb.Call[*capnweb.Stub](ctx, main, "getChild")
 		if err != nil {
 			t.Fatalf("Call: %v", err)
 		}
-		entry, ok := result.(*capnweb.ImportEntry)
-		if !ok {
-			t.Fatalf("expected *ImportEntry, got %T", result)
-		}
 
-		childResult, err := client.Call(ctx, entry.ID, "childMethod")
+		childResult, err := capnweb.Call[string](ctx, child, "childMethod")
 		if err != nil {
 			t.Fatalf("childMethod: %v", err)
 		}
@@ -252,7 +250,7 @@ func runGoClient(t *testing.T, serverURL string) {
 			t.Fatalf("got %v; want 'from child'", childResult)
 		}
 
-		_ = client.Release(ctx, entry.ID, entry.RefCount)
+		_ = child.Release(ctx)
 	})
 }
 
