@@ -291,21 +291,19 @@ func TestSessionGetChildRpcTarget(t *testing.T) {
 	go func() { _ = server.Run(ctx) }()
 	go func() { _ = client.Run(ctx) }()
 
-	// Call GetChild — should return an ImportEntry (pass-by-reference).
-	result, err := client.Call(ctx, 0, "GetChild")
+	main := client.Main()
+
+	// Call GetChild — should return a *Stub (pass-by-reference).
+	child, err := Call[*Stub](ctx, main, "GetChild")
 	if err != nil {
 		t.Fatalf("GetChild: %v", err)
 	}
-	entry, ok := result.(*ImportEntry)
-	if !ok {
-		t.Fatalf("expected *ImportEntry, got %T: %v", result, result)
-	}
-	if entry.ID >= 0 {
-		t.Fatalf("expected negative import ID, got %d", entry.ID)
+	if child.ID() >= 0 {
+		t.Fatalf("expected negative import ID, got %d", child.ID())
 	}
 
 	// Call ChildMethod on the returned child.
-	childResult, err := client.Call(ctx, entry.ID, "ChildMethod")
+	childResult, err := Call[string](ctx, child, "ChildMethod")
 	if err != nil {
 		t.Fatalf("ChildMethod: %v", err)
 	}
@@ -314,7 +312,7 @@ func TestSessionGetChildRpcTarget(t *testing.T) {
 	}
 
 	// Release the child.
-	if err := client.Release(ctx, entry.ID, entry.RefCount); err != nil {
+	if err := child.Release(ctx); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
 }

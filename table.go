@@ -82,6 +82,24 @@ func (t *ImportTable) Remove(id int64) {
 	delete(t.entries, id)
 }
 
+// Release decrements the refcount for an import by count. If the refcount
+// reaches zero, the entry is removed and true is returned.
+func (t *ImportTable) Release(id, count int64) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	e, ok := t.entries[id]
+	if !ok {
+		return false
+	}
+	e.RefCount -= count
+	if e.RefCount <= 0 {
+		delete(t.entries, id)
+		return true
+	}
+	return false
+}
+
 // ExportTable tracks objects exported to the remote endpoint.
 // The exporting side allocates negative IDs starting from -1.
 type ExportTable struct {
