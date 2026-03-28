@@ -21,6 +21,10 @@ func (s *batchTestService) Add(_ context.Context, a, b float64) (float64, error)
 	return a + b, nil
 }
 
+func (s *batchTestService) GetChild(_ context.Context) (*childService, error) {
+	return &childService{}, nil
+}
+
 func TestBatchHandlerSingleCall(t *testing.T) {
 	handler := BatchHandler(&batchTestService{})
 	srv := httptest.NewServer(handler)
@@ -91,6 +95,42 @@ func TestBatchHandlerPipelinedCalls(t *testing.T) {
 	}
 	if resolves < 2 {
 		t.Fatalf("expected at least 2 resolves, got %d (total msgs: %d)", resolves, len(msgs))
+	}
+}
+
+func TestBatchHandlerPipeline(t *testing.T) {
+	handler := BatchHandler(&batchTestService{})
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	// Pipeline: GetChild → ChildMethod in one batch, only pull the final result.
+	body := `["push",["import",0,"GetChild",[]]]` + "\n" +
+		`["push",["pipeline",1,"ChildMethod",[]]]` + "\n" +
+		`["pull",2]` + "\n"
+
+	resp, err := http.Post(srv.URL, "application/x-ndjson", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	msgs, err := ReadNDJSON(resp.Body)
+	if err != nil {
+		t.Fatalf("read response: %v", err)
+	}
+
+	found := false
+	for _, msg := range msgs {
+		if rm, ok := msg.(ResolveMsg); ok && rm.ExportID == 2 {
+			var val string
+			_ = json.Unmarshal(rm.Expr, &val)
+			if val == "from child" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected resolve with 'from child', got %d messages", len(msgs))
 	}
 }
 

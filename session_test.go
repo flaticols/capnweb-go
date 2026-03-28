@@ -373,3 +373,61 @@ func TestSessionMethodNotFoundIsTypeError(t *testing.T) {
 		t.Fatalf("Type = %q; want TypeError", errExpr.Type)
 	}
 }
+
+func TestPipelineTwoStage(t *testing.T) {
+	clientTr, serverTr := newChanTransportPair()
+	server := NewSession(serverTr, &parentService{})
+	client := NewSession(clientTr, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	go func() { _ = server.Run(ctx) }()
+	go func() { _ = client.Run(ctx) }()
+
+	main := client.Main()
+
+	// Pipeline: GetChild → ChildMethod without waiting for GetChild.
+	child, err := main.Pipeline(ctx, "GetChild")
+	if err != nil {
+		t.Fatalf("Pipeline: %v", err)
+	}
+	defer child.Release(ctx)
+
+	result, err := Call[string](ctx, child, "ChildMethod")
+	if err != nil {
+		t.Fatalf("ChildMethod: %v", err)
+	}
+	if result != "from child" {
+		t.Fatalf("result = %v; want 'from child'", result)
+	}
+}
+
+func TestPipelineErrorPropagation(t *testing.T) {
+	clientTr, serverTr := newChanTransportPair()
+	server := NewSession(serverTr, &testService{})
+	client := NewSession(clientTr, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	go func() { _ = server.Run(ctx) }()
+	go func() { _ = client.Run(ctx) }()
+
+	main := client.Main()
+
+	// Pipeline on a method that fails — the second stage should get the error.
+	failing, err := main.Pipeline(ctx, "Fail")
+	if err != nil {
+		t.Fatalf("Pipeline: %v", err)
+	}
+	defer failing.Release(ctx)
+
+	_, err = failing.Call(ctx, "AnyMethod")
+	if err == nil {
+		t.Fatal("expected error from pipeline on failed stage")
+	}
+	if !strings.Contains(err.Error(), "intentional error") {
+		t.Fatalf("error = %v; want 'intentional error'", err)
+	}
+}
