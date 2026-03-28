@@ -106,8 +106,11 @@ func (s *Session) Run(ctx context.Context) error {
 // is available. targetID is the import ID of the remote object (0 for the
 // bootstrap interface).
 func (s *Session) Call(ctx context.Context, targetID int64, method string, args ...any) (any, error) {
-	// Build the expression: ["import", targetID, method, [args...]]
-	expr, err := buildCallExpr(targetID, method, args)
+	return s.callWithTag(ctx, "import", targetID, method, args...)
+}
+
+func (s *Session) callWithTag(ctx context.Context, tag string, targetID int64, method string, args ...any) (any, error) {
+	expr, err := buildCallExpr(tag, targetID, method, args)
 	if err != nil {
 		return nil, err
 	}
@@ -143,6 +146,25 @@ func (s *Session) Call(ctx context.Context, targetID int64, method string, args 
 	s.imports.Remove(entry.ID)
 
 	return val, nil
+}
+
+// push sends a push message without pull. Returns the allocated import ID.
+// Used for promise pipelining where the result is consumed by a subsequent call.
+func (s *Session) push(ctx context.Context, tag string, targetID int64, method string, args []any) (int64, error) {
+	expr, err := buildCallExpr(tag, targetID, method, args)
+	if err != nil {
+		return 0, err
+	}
+
+	s.sendMu.Lock()
+	entry := s.imports.Allocate()
+	pushErr := s.transport.Send(ctx, PushMsg{Expr: expr})
+	s.sendMu.Unlock()
+
+	if pushErr != nil {
+		return 0, fmt.Errorf("capnweb: send push: %w", pushErr)
+	}
+	return entry.ID, nil
 }
 
 // Abort sends an abort message and terminates the session.
@@ -368,6 +390,13 @@ func (s *Session) dispatchCall(exportID int64, path []string, args []Expr) (any,
 	}
 
 	target := entry.Target
+	// Unwrap deferred results from prior pipeline stages.
+	if dr, ok := target.(*deferredResult); ok {
+		if dr.err != nil {
+			return nil, dr.err
+		}
+		target = dr.val
+	}
 	if len(path) == 0 {
 		return target, nil
 	}
@@ -503,11 +532,11 @@ type deferredResult struct {
 	err error
 }
 
-func buildCallExpr(targetID int64, method string, args []any) (json.RawMessage, error) {
+func buildCallExpr(tag string, targetID int64, method string, args []any) (json.RawMessage, error) {
 	if method != "" {
-		return json.Marshal([]any{"import", targetID, method, args})
+		return json.Marshal([]any{tag, targetID, method, args})
 	}
-	return json.Marshal([]any{"import", targetID})
+	return json.Marshal([]any{tag, targetID})
 }
 
 func capitalize(s string) string {

@@ -23,6 +23,7 @@ import (
 type Stub struct {
 	session  *Session
 	importID int64
+	pipeline bool // true for stubs referencing pending pipeline results
 
 	mu       sync.Mutex
 	released bool
@@ -35,6 +36,24 @@ func newStub(session *Session, importID int64) *Stub {
 	}
 	runtime.SetFinalizer(s, finalizeStub)
 	return s
+}
+
+func newPipelineStub(session *Session, importID int64) *Stub {
+	s := &Stub{
+		session:  session,
+		importID: importID,
+		pipeline: true,
+	}
+	runtime.SetFinalizer(s, finalizeStub)
+	return s
+}
+
+// tag returns the expression tag for calls targeting this stub.
+func (s *Stub) tag() string {
+	if s.pipeline {
+		return "pipeline"
+	}
+	return "import"
 }
 
 func finalizeStub(s *Stub) {
@@ -55,11 +74,27 @@ func finalizeStub(s *Stub) {
 // is available. If the remote returns a pass-by-reference object, it is
 // automatically wrapped as a *Stub.
 func (s *Stub) Call(ctx context.Context, method string, args ...any) (any, error) {
-	result, err := s.session.Call(ctx, s.importID, method, args...)
+	result, err := s.session.callWithTag(ctx, s.tag(), s.importID, method, args...)
 	if err != nil {
 		return nil, err
 	}
 	return s.session.wrapImportEntry(result), nil
+}
+
+// Pipeline sends a method call without waiting for the result, returning
+// a pipeline stub that can be used as the target of subsequent calls.
+// This enables promise pipelining — chaining dependent calls without
+// waiting for intermediate results.
+//
+//	auth, _ := main.Pipeline(ctx, "Authenticate", token)  // push only
+//	data, _ := Call[string](ctx, auth, "GetData")          // push + pull + await
+//	defer auth.Release(ctx)
+func (s *Stub) Pipeline(ctx context.Context, method string, args ...any) (*Stub, error) {
+	importID, err := s.session.push(ctx, s.tag(), s.importID, method, args)
+	if err != nil {
+		return nil, err
+	}
+	return newPipelineStub(s.session, importID), nil
 }
 
 // Release sends a release message for this stub's import and marks it as

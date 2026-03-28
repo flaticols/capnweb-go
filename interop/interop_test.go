@@ -256,6 +256,23 @@ func runGoClient(t *testing.T, serverURL string) {
 
 		_ = child.Release(ctx)
 	})
+
+	t.Run("pipeline", func(t *testing.T) {
+		// Pipeline: getChild → childMethod without waiting for getChild.
+		child, err := main.Pipeline(ctx, "getChild")
+		if err != nil {
+			t.Fatalf("Pipeline: %v", err)
+		}
+		defer child.Release(ctx)
+
+		result, err := capnweb.Call[string](ctx, child, "childMethod")
+		if err != nil {
+			t.Fatalf("childMethod: %v", err)
+		}
+		if result != "from child" {
+			t.Fatalf("got %v; want 'from child'", result)
+		}
+	})
 }
 
 // --- helpers ---

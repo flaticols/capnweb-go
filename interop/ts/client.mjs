@@ -146,6 +146,24 @@ describe("server interop", () => {
     send(ws, ["release", childExportId, 1]);
   });
 
+  it("pipeline: getChild then childMethod in one batch", async () => {
+    const getChildId = nextId++;
+    const childMethodId = nextId++;
+
+    // Send both pushes before any pull — true pipelining.
+    send(ws, ["push", ["import", 0, methods.getChild, []]]);
+    send(ws, ["push", ["pipeline", getChildId, methods.childMethod, []]]);
+    send(ws, ["pull", childMethodId]);
+
+    const msg = await recv(ws);
+    assert.equal(msg[0], "resolve");
+    assert.equal(msg[1], childMethodId);
+    assert.equal(msg[2], "from child");
+
+    send(ws, ["release", childMethodId, 1]);
+    send(ws, ["release", getChildId, 1]);
+  });
+
   it("unknown method returns reject", async () => {
     const id = nextId++;
     send(ws, ["push", ["import", 0, methods.doesNotExist, []]]);
