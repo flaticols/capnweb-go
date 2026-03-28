@@ -3,6 +3,7 @@ package capnweb
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"reflect"
@@ -146,8 +147,7 @@ func (s *Session) Call(ctx context.Context, targetID int64, method string, args 
 
 // Abort sends an abort message and terminates the session.
 func (s *Session) Abort(reason error) error {
-	msg := reason.Error()
-	expr, _ := json.Marshal([]any{"error", "Error", msg})
+	expr, _ := EncodeExpr(errorToExpr(reason))
 	s.ctxMu.RLock()
 	ctx := s.ctx
 	cancel := s.cancel
@@ -310,20 +310,31 @@ func (s *Session) handleAbort(m AbortMsg) error {
 
 func (s *Session) sendResult(exportID int64, val any, err error) error {
 	if err != nil {
-		errExpr, _ := json.Marshal([]any{"error", "Error", err.Error()})
-		return s.transport.Send(s.getCtx(), RejectMsg{ExportID: exportID, Expr: errExpr})
+		encoded, _ := EncodeExpr(errorToExpr(err))
+		return s.transport.Send(s.getCtx(), RejectMsg{ExportID: exportID, Expr: encoded})
 	}
 	expr, convErr := s.valueToExpr(val)
 	if convErr != nil {
-		errExpr, _ := json.Marshal([]any{"error", "Error", convErr.Error()})
-		return s.transport.Send(s.getCtx(), RejectMsg{ExportID: exportID, Expr: errExpr})
+		encoded, _ := EncodeExpr(errorToExpr(convErr))
+		return s.transport.Send(s.getCtx(), RejectMsg{ExportID: exportID, Expr: encoded})
 	}
 	encoded, encErr := EncodeExpr(expr)
 	if encErr != nil {
-		errExpr, _ := json.Marshal([]any{"error", "Error", encErr.Error()})
-		return s.transport.Send(s.getCtx(), RejectMsg{ExportID: exportID, Expr: errExpr})
+		encoded, _ = EncodeExpr(errorToExpr(encErr))
+		return s.transport.Send(s.getCtx(), RejectMsg{ExportID: exportID, Expr: encoded})
 	}
 	return s.transport.Send(s.getCtx(), ResolveMsg{ExportID: exportID, Expr: encoded})
+}
+
+// errorToExpr converts a Go error to an ErrorExpr. If the error is already
+// an *ErrorExpr (via errors.As), the type and stack are preserved. Otherwise
+// it is wrapped as a generic "Error".
+func errorToExpr(err error) ErrorExpr {
+	var errExpr *ErrorExpr
+	if errors.As(err, &errExpr) {
+		return *errExpr
+	}
+	return ErrorExpr{Type: "Error", Message: err.Error()}
 }
 
 // Release sends a release message for the given import ID and removes it
@@ -368,7 +379,7 @@ func (s *Session) dispatchCall(exportID int64, path []string, args []Expr) (any,
 		m = v.MethodByName(capitalize(methodName))
 	}
 	if !m.IsValid() {
-		return nil, fmt.Errorf("capnweb: method %q not found on %T", methodName, target)
+		return nil, NewTypeError(fmt.Sprintf("method %q not found on %T", methodName, target))
 	}
 
 	mt := m.Type()

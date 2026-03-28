@@ -231,8 +231,12 @@ func runGoClient(t *testing.T, serverURL string) {
 		if err == nil {
 			t.Fatal("expected error")
 		}
-		if !strings.Contains(err.Error(), "intentional error") {
-			t.Fatalf("got %v; want 'intentional error'", err)
+		var errExpr *capnweb.ErrorExpr
+		if !errors.As(err, &errExpr) {
+			t.Fatalf("errors.As failed: got %T", err)
+		}
+		if !strings.Contains(errExpr.Message, "intentional error") {
+			t.Fatalf("got %v; want 'intentional error'", errExpr.Message)
 		}
 	})
 

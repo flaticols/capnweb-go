@@ -72,6 +72,10 @@ func (s *testService) Fail(_ context.Context) (any, error) {
 	return nil, errors.New("intentional error")
 }
 
+func (s *testService) FailTyped(_ context.Context) (any, error) {
+	return nil, NewTypeError("bad argument")
+}
+
 // childService is an RpcTarget returned by reference.
 type childService struct {
 	RpcTargetBase
@@ -314,5 +318,58 @@ func TestSessionGetChildRpcTarget(t *testing.T) {
 	// Release the child.
 	if err := child.Release(ctx); err != nil {
 		t.Fatalf("Release: %v", err)
+	}
+}
+
+func TestSessionErrorTypePreservation(t *testing.T) {
+	clientTr, serverTr := newChanTransportPair()
+	server := NewSession(serverTr, &testService{})
+	client := NewSession(clientTr, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	go func() { _ = server.Run(ctx) }()
+	go func() { _ = client.Run(ctx) }()
+
+	_, err := client.Call(ctx, 0, "FailTyped")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	var errExpr *ErrorExpr
+	if !errors.As(err, &errExpr) {
+		t.Fatalf("errors.As failed: got %T", err)
+	}
+	if errExpr.Type != "TypeError" {
+		t.Fatalf("Type = %q; want TypeError", errExpr.Type)
+	}
+	if errExpr.Message != "bad argument" {
+		t.Fatalf("Message = %q; want 'bad argument'", errExpr.Message)
+	}
+}
+
+func TestSessionMethodNotFoundIsTypeError(t *testing.T) {
+	clientTr, serverTr := newChanTransportPair()
+	server := NewSession(serverTr, &testService{})
+	client := NewSession(clientTr, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	go func() { _ = server.Run(ctx) }()
+	go func() { _ = client.Run(ctx) }()
+
+	_, err := client.Call(ctx, 0, "NonExistent")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+
+	var errExpr *ErrorExpr
+	if !errors.As(err, &errExpr) {
+		t.Fatalf("errors.As failed: got %T", err)
+	}
+	if errExpr.Type != "TypeError" {
+		t.Fatalf("Type = %q; want TypeError", errExpr.Type)
 	}
 }
