@@ -80,6 +80,21 @@ func (e ErrorExpr) Error() string {
 	return fmt.Sprintf("%s: %s", e.Type, e.Message)
 }
 
+// NewTypeError creates an ErrorExpr with type "TypeError".
+func NewTypeError(message string) *ErrorExpr {
+	return &ErrorExpr{Type: "TypeError", Message: message}
+}
+
+// NewRangeError creates an ErrorExpr with type "RangeError".
+func NewRangeError(message string) *ErrorExpr {
+	return &ErrorExpr{Type: "RangeError", Message: message}
+}
+
+// NewReferenceError creates an ErrorExpr with type "ReferenceError".
+func NewReferenceError(message string) *ErrorExpr {
+	return &ErrorExpr{Type: "ReferenceError", Message: message}
+}
+
 // HeadersExpr represents HTTP headers — ["headers", [[name, value], ...]].
 type HeadersExpr struct{ Header http.Header }
 
