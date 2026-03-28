@@ -408,7 +408,7 @@ func (s *Session) evaluateAndCall(raw json.RawMessage) (any, error) {
 	case PipelineExpr:
 		return s.dispatchCall(e.ImportID, e.Path, e.Args)
 	case RemapExpr:
-		return s.evaluateRemap(e)
+		return s.evaluateRemap(&e)
 	default:
 		return s.exprToValue(expr), nil
 	}
@@ -574,7 +574,7 @@ func (s *Session) nextRemoteImportID() int64 {
 // collection. Uses a scoped import table where negative IDs reference
 // captures, 0 is the current element, and positive IDs are previous
 // instruction results.
-func (s *Session) evaluateRemap(r RemapExpr) (any, error) {
+func (s *Session) evaluateRemap(r *RemapExpr) (any, error) {
 	// Resolve the collection.
 	collection, err := s.dispatchCall(r.ImportID, r.Path, nil)
 	if err != nil {
@@ -622,49 +622,38 @@ func (s *Session) evaluateRemapElement(element any, captures []any, instructions
 	return instrResults[len(instrResults)-1], nil
 }
 
-func (s *Session) evaluateRemapInstr(instr Expr, element any, captures []any, results []any) (any, error) {
+func (s *Session) evaluateRemapInstr(instr Expr, element any, captures, results []any) (any, error) {
 	switch e := instr.(type) {
 	case ImportExpr:
 		target := s.remapResolveID(e.ImportID, element, captures, results)
-		if len(e.Path) == 0 && e.Args == nil {
-			return target, nil
-		}
-		if len(e.Path) > 0 && e.Args == nil {
-			return accessPath(target, e.Path), nil
-		}
-		// Call with args — resolve args in remap scope.
-		resolvedArgs := make([]Expr, len(e.Args))
-		for i, arg := range e.Args {
-			val, err := s.evaluateRemapInstr(arg, element, captures, results)
-			if err != nil {
-				return nil, err
-			}
-			resolvedArgs[i] = LiteralExpr{Value: val}
-		}
-		return s.dispatchCallOnValue(target, e.Path, resolvedArgs)
+		return s.remapEvalRef(target, e.Path, e.Args, element, captures, results)
 	case PipelineExpr:
 		target := s.remapResolveID(e.ImportID, element, captures, results)
-		if len(e.Path) == 0 && e.Args == nil {
-			return target, nil
-		}
-		if len(e.Path) > 0 && e.Args == nil {
-			return accessPath(target, e.Path), nil
-		}
-		resolvedArgs := make([]Expr, len(e.Args))
-		for i, arg := range e.Args {
-			val, err := s.evaluateRemapInstr(arg, element, captures, results)
-			if err != nil {
-				return nil, err
-			}
-			resolvedArgs[i] = LiteralExpr{Value: val}
-		}
-		return s.dispatchCallOnValue(target, e.Path, resolvedArgs)
+		return s.remapEvalRef(target, e.Path, e.Args, element, captures, results)
 	default:
 		return s.exprToValue(instr), nil
 	}
 }
 
-func (s *Session) remapResolveID(id int64, element any, captures []any, results []any) any {
+func (s *Session) remapEvalRef(target any, path []string, args []Expr, element any, captures, results []any) (any, error) {
+	if len(path) == 0 && args == nil {
+		return target, nil
+	}
+	if len(path) > 0 && args == nil {
+		return accessPath(target, path), nil
+	}
+	resolvedArgs := make([]Expr, len(args))
+	for i, arg := range args {
+		val, err := s.evaluateRemapInstr(arg, element, captures, results)
+		if err != nil {
+			return nil, err
+		}
+		resolvedArgs[i] = LiteralExpr{Value: val}
+	}
+	return s.dispatchCallOnValue(target, path, resolvedArgs)
+}
+
+func (s *Session) remapResolveID(id int64, element any, captures, results []any) any {
 	switch {
 	case id == 0:
 		return element
