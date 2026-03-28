@@ -17,6 +17,8 @@ const methods = {
   echo: LOWER ? "echo" : "Echo",
   fail: LOWER ? "fail" : "Fail",
   doesNotExist: LOWER ? "doesNotExist" : "DoesNotExist",
+  getChild: LOWER ? "getChild" : "GetChild",
+  childMethod: LOWER ? "childMethod" : "ChildMethod",
 };
 
 function send(ws, msg) {
@@ -114,6 +116,34 @@ describe("server interop", () => {
     assert.ok(msg[2][2].includes("intentional error"));
 
     send(ws, ["release", id, 1]);
+  });
+
+  it("getChild returns export and child method works", async () => {
+    const getChildId = nextId++;
+    send(ws, ["push", ["import", 0, methods.getChild, []]]);
+    send(ws, ["pull", getChildId]);
+
+    const msg = await recv(ws);
+    assert.equal(msg[0], "resolve");
+    assert.equal(msg[1], getChildId);
+    assert.ok(Array.isArray(msg[2]), "expected array expression");
+    assert.equal(msg[2][0], "export");
+    const childExportId = msg[2][1];
+    assert.ok(childExportId < 0, "export ID should be negative");
+
+    // Call childMethod on the exported child.
+    const childMethodId = nextId++;
+    send(ws, ["push", ["import", childExportId, methods.childMethod, []]]);
+    send(ws, ["pull", childMethodId]);
+
+    const childMsg = await recv(ws);
+    assert.equal(childMsg[0], "resolve");
+    assert.equal(childMsg[1], childMethodId);
+    assert.equal(childMsg[2], "from child");
+
+    send(ws, ["release", childMethodId, 1]);
+    send(ws, ["release", getChildId, 1]);
+    send(ws, ["release", childExportId, 1]);
   });
 
   it("unknown method returns reject", async () => {

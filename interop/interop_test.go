@@ -22,6 +22,14 @@ func (s *testService) Echo(_ context.Context, val any) (any, error)          { r
 func (s *testService) Add(_ context.Context, a, b float64) (float64, error)  { return a + b, nil }
 func (s *testService) Greet(_ context.Context, name string) (string, error)  { return "Hello, " + name + "!", nil }
 func (s *testService) Fail(_ context.Context) (any, error)                   { return nil, errors.New("intentional error") }
+func (s *testService) GetChild(_ context.Context) (*childService, error)     { return &childService{}, nil }
+
+// childService is an RpcTarget returned by reference.
+type childService struct {
+	capnweb.RpcTargetBase
+}
+
+func (c *childService) ChildMethod(_ context.Context) (string, error) { return "from child", nil }
 
 // --- Test matrix ---
 //
@@ -224,6 +232,27 @@ func runGoClient(t *testing.T, serverURL string) {
 		if !strings.Contains(err.Error(), "intentional error") {
 			t.Fatalf("got %v; want 'intentional error'", err)
 		}
+	})
+
+	t.Run("getChild", func(t *testing.T) {
+		result, err := client.Call(ctx, 0, "getChild")
+		if err != nil {
+			t.Fatalf("Call: %v", err)
+		}
+		entry, ok := result.(*capnweb.ImportEntry)
+		if !ok {
+			t.Fatalf("expected *ImportEntry, got %T", result)
+		}
+
+		childResult, err := client.Call(ctx, entry.ID, "childMethod")
+		if err != nil {
+			t.Fatalf("childMethod: %v", err)
+		}
+		if childResult != "from child" {
+			t.Fatalf("got %v; want 'from child'", childResult)
+		}
+
+		_ = client.Release(ctx, entry.ID, entry.RefCount)
 	})
 }
 

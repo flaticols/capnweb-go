@@ -72,6 +72,24 @@ func (s *testService) Fail(_ context.Context) (any, error) {
 	return nil, errors.New("intentional error")
 }
 
+// childService is an RpcTarget returned by reference.
+type childService struct {
+	RpcTargetBase
+}
+
+func (c *childService) ChildMethod(_ context.Context) (string, error) {
+	return "from child", nil
+}
+
+// parentService extends testService with a method that returns an RpcTarget.
+type parentService struct {
+	testService
+}
+
+func (s *parentService) GetChild(_ context.Context) (*childService, error) {
+	return &childService{}, nil
+}
+
 func TestSessionCallResolve(t *testing.T) {
 	clientTr, serverTr := newChanTransportPair()
 	server := NewSession(serverTr, &testService{})
@@ -259,5 +277,44 @@ func TestSessionStream(t *testing.T) {
 	json.Unmarshal(resolve.Expr, &val)
 	if val != 42.0 {
 		t.Fatalf("result = %v; want 42", val)
+	}
+}
+
+func TestSessionGetChildRpcTarget(t *testing.T) {
+	clientTr, serverTr := newChanTransportPair()
+	server := NewSession(serverTr, &parentService{})
+	client := NewSession(clientTr, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	go func() { _ = server.Run(ctx) }()
+	go func() { _ = client.Run(ctx) }()
+
+	// Call GetChild — should return an ImportEntry (pass-by-reference).
+	result, err := client.Call(ctx, 0, "GetChild")
+	if err != nil {
+		t.Fatalf("GetChild: %v", err)
+	}
+	entry, ok := result.(*ImportEntry)
+	if !ok {
+		t.Fatalf("expected *ImportEntry, got %T: %v", result, result)
+	}
+	if entry.ID >= 0 {
+		t.Fatalf("expected negative import ID, got %d", entry.ID)
+	}
+
+	// Call ChildMethod on the returned child.
+	childResult, err := client.Call(ctx, entry.ID, "ChildMethod")
+	if err != nil {
+		t.Fatalf("ChildMethod: %v", err)
+	}
+	if childResult != "from child" {
+		t.Fatalf("ChildMethod = %v; want 'from child'", childResult)
+	}
+
+	// Release the child.
+	if err := client.Release(ctx, entry.ID, entry.RefCount); err != nil {
+		t.Fatalf("Release: %v", err)
 	}
 }

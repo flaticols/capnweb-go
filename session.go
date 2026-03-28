@@ -291,12 +291,26 @@ func (s *Session) sendResult(exportID int64, val any, err error) error {
 		errExpr, _ := json.Marshal([]any{"error", "Error", err.Error()})
 		return s.transport.Send(s.getCtx(), RejectMsg{ExportID: exportID, Expr: errExpr})
 	}
-	encoded, marshalErr := json.Marshal(val)
-	if marshalErr != nil {
-		errExpr, _ := json.Marshal([]any{"error", "Error", marshalErr.Error()})
+	expr, convErr := s.valueToExpr(val)
+	if convErr != nil {
+		errExpr, _ := json.Marshal([]any{"error", "Error", convErr.Error()})
+		return s.transport.Send(s.getCtx(), RejectMsg{ExportID: exportID, Expr: errExpr})
+	}
+	encoded, encErr := EncodeExpr(expr)
+	if encErr != nil {
+		errExpr, _ := json.Marshal([]any{"error", "Error", encErr.Error()})
 		return s.transport.Send(s.getCtx(), RejectMsg{ExportID: exportID, Expr: errExpr})
 	}
 	return s.transport.Send(s.getCtx(), ResolveMsg{ExportID: exportID, Expr: encoded})
+}
+
+// Release sends a release message for the given import ID and removes it
+// from the import table. Used when the caller is done with a remote object
+// obtained via pass-by-reference.
+func (s *Session) Release(ctx context.Context, importID, refCount int64) error {
+	err := s.transport.Send(ctx, ReleaseMsg{ImportID: importID, RefCount: refCount})
+	s.imports.Remove(importID)
+	return err
 }
 
 func (s *Session) evaluateAndCall(raw json.RawMessage) (any, error) {
@@ -362,6 +376,41 @@ func (s *Session) dispatchCall(exportID int64, path []string, args []Expr) (any,
 
 	results := m.Call(callArgs)
 	return interpretResults(results)
+}
+
+// valueToExpr converts a Go value to an Expr for wire encoding.
+// RpcTarget values are exported as ["export", id]; plain values are
+// wrapped as LiteralExpr.
+func (s *Session) valueToExpr(val any) (Expr, error) {
+	if val == nil {
+		return LiteralExpr{Value: nil}, nil
+	}
+	if _, ok := val.(RpcTarget); ok {
+		entry := s.exports.Export(val)
+		return ExportExpr{ExportID: entry.ID}, nil
+	}
+	rv := reflect.ValueOf(val)
+	if rv.Kind() == reflect.Slice {
+		hasRef := false
+		for i := range rv.Len() {
+			if _, ok := rv.Index(i).Interface().(RpcTarget); ok {
+				hasRef = true
+				break
+			}
+		}
+		if hasRef {
+			elems := make([]Expr, rv.Len())
+			for i := range rv.Len() {
+				e, err := s.valueToExpr(rv.Index(i).Interface())
+				if err != nil {
+					return nil, err
+				}
+				elems[i] = e
+			}
+			return ArrayExpr{Elements: elems}, nil
+		}
+	}
+	return LiteralExpr{Value: val}, nil
 }
 
 func (s *Session) exprToValue(e Expr) any {
