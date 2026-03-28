@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 )
 
 // BatchHandler returns an http.Handler that processes batched RPC requests.
@@ -128,11 +129,14 @@ func WriteNDJSON(w io.Writer, msgs []Message) error {
 type collectorTransport struct {
 	inbox  []Message
 	pos    int
+	mu     sync.Mutex
 	outbox []Message
 }
 
 func (t *collectorTransport) Send(_ context.Context, msg Message) error {
+	t.mu.Lock()
 	t.outbox = append(t.outbox, msg)
+	t.mu.Unlock()
 	return nil
 }
 

@@ -94,6 +94,18 @@ func (s *parentService) GetChild(_ context.Context) (*childService, error) {
 	return &childService{}, nil
 }
 
+// remapService provides a collection and a transformation method for remap tests.
+type remapService struct {
+	testService
+}
+
+func (s *remapService) GetPeople(_ context.Context) ([]any, error) {
+	return []any{
+		map[string]any{"name": "Alice"},
+		map[string]any{"name": "Bob"},
+	}, nil
+}
+
 func TestSessionCallResolve(t *testing.T) {
 	clientTr, serverTr := newChanTransportPair()
 	server := NewSession(serverTr, &testService{})
@@ -429,5 +441,114 @@ func TestPipelineErrorPropagation(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "intentional error") {
 		t.Fatalf("error = %v; want 'intentional error'", err)
+	}
+}
+
+func TestRemapPropertyExtraction(t *testing.T) {
+	clientTr, serverTr := newChanTransportPair()
+	server := NewSession(serverTr, &remapService{})
+	client := NewSession(clientTr, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	go func() { _ = server.Run(ctx) }()
+	go func() { _ = client.Run(ctx) }()
+
+	// Remap: GetPeople().map(x => x.name)
+	remapExpr := RemapExpr{
+		ImportID:     0,
+		Path:         []string{"GetPeople"},
+		Captures:     []Expr{},
+		Instructions: []Expr{ImportExpr{ImportID: 0, Path: []string{"name"}}},
+	}
+	encoded, err := EncodeExpr(remapExpr)
+	if err != nil {
+		t.Fatalf("EncodeExpr: %v", err)
+	}
+
+	f := NewFuture()
+	client.sendMu.Lock()
+	entry := client.imports.Allocate()
+	client.mu.Lock()
+	client.pending[entry.ID] = &pendingCall{future: f}
+	client.mu.Unlock()
+	_ = client.transport.Send(ctx, PushMsg{Expr: encoded})
+	_ = client.transport.Send(ctx, PullMsg{ImportID: entry.ID})
+	client.sendMu.Unlock()
+
+	val, err := f.Await(ctx)
+	if err != nil {
+		t.Fatalf("Await: %v", err)
+	}
+
+	names, ok := val.([]any)
+	if !ok {
+		t.Fatalf("expected []any, got %T: %v", val, val)
+	}
+	if len(names) != 2 {
+		t.Fatalf("got %d results; want 2", len(names))
+	}
+	if names[0] != "Alice" || names[1] != "Bob" {
+		t.Fatalf("got %v; want [Alice, Bob]", names)
+	}
+}
+
+func TestRemapWithCapture(t *testing.T) {
+	clientTr, serverTr := newChanTransportPair()
+	server := NewSession(serverTr, &remapService{})
+	client := NewSession(clientTr, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	go func() { _ = server.Run(ctx) }()
+	go func() { _ = client.Run(ctx) }()
+
+	// Remap: GetPeople().map(x => service.Greet(x.name))
+	// Capture: the bootstrap service (export 0)
+	// Instructions:
+	//   1. Get x.name → result 1
+	//   2. Call capture[0].Greet(result1) → result 2
+	remapExpr := RemapExpr{
+		ImportID: 0,
+		Path:     []string{"GetPeople"},
+		Captures: []Expr{ExportExpr{ExportID: 0}},
+		Instructions: []Expr{
+			ImportExpr{ImportID: 0, Path: []string{"name"}},
+			PipelineExpr{ImportID: -1, Path: []string{"Greet"}, Args: []Expr{
+				ImportExpr{ImportID: 1},
+			}},
+		},
+	}
+	encoded, err := EncodeExpr(remapExpr)
+	if err != nil {
+		t.Fatalf("EncodeExpr: %v", err)
+	}
+
+	f := NewFuture()
+	client.sendMu.Lock()
+	entry := client.imports.Allocate()
+	client.mu.Lock()
+	client.pending[entry.ID] = &pendingCall{future: f}
+	client.mu.Unlock()
+	_ = client.transport.Send(ctx, PushMsg{Expr: encoded})
+	_ = client.transport.Send(ctx, PullMsg{ImportID: entry.ID})
+	client.sendMu.Unlock()
+
+	val, err := f.Await(ctx)
+	if err != nil {
+		t.Fatalf("Await: %v", err)
+	}
+
+	results, ok := val.([]any)
+	if !ok {
+		t.Fatalf("expected []any, got %T: %v", val, val)
+	}
+	if len(results) != 2 {
+		t.Fatalf("got %d results; want 2", len(results))
+	}
+	if results[0] != "Hello, Alice!" || results[1] != "Hello, Bob!" {
+		t.Fatalf("got %v; want [Hello, Alice!, Hello, Bob!]", results)
 	}
 }
