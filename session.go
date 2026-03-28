@@ -19,9 +19,9 @@ type Session struct {
 
 	mu             sync.Mutex
 	pending        map[int64]*pendingCall
-	pulled         map[int64]bool // export IDs that have been pulled
-	remoteImportID int64          // mirrors the remote's import ID allocation
+	remoteImportID int64 // mirrors the remote's import ID allocation
 	err            error
+	wg             sync.WaitGroup // tracks in-flight push goroutines
 
 	// sendMu serializes outbound push/stream messages so that the implicit
 	// import ID assignment (based on send order) stays in sync. Allocate must
@@ -46,9 +46,8 @@ func NewSession(transport Transport, main any) *Session {
 		transport: transport,
 		imports:   NewImportTable(),
 		exports:   NewExportTable(main),
-		pending:   make(map[int64]*pendingCall),
-		pulled:    make(map[int64]bool),
-		done:      make(chan struct{}),
+		pending: make(map[int64]*pendingCall),
+		done:    make(chan struct{}),
 		ctx:       ctx,
 		cancel:    cancel,
 	}
@@ -92,10 +91,14 @@ func (s *Session) Run(ctx context.Context) error {
 	for {
 		msg, err := s.transport.Recv(s.getCtx())
 		if err != nil {
+			// Wait for in-flight goroutines before terminating
+			// (e.g., batch transport returns EOF after all messages).
+			s.wg.Wait()
 			s.terminateAll(fmt.Errorf("capnweb: transport: %w", err))
 			return err
 		}
 		if err := s.handleMessage(msg); err != nil {
+			s.wg.Wait()
 			s.terminateAll(err)
 			return err
 		}
@@ -225,8 +228,7 @@ func (s *Session) handleMessage(msg Message) error {
 	case StreamMsg:
 		return s.handleStream(m)
 	case PipeMsg:
-		// TODO: implement pipe handling (#11)
-		return nil
+		return s.handlePipe(m)
 	case AbortMsg:
 		return s.handleAbort(m)
 	default:
@@ -236,34 +238,36 @@ func (s *Session) handleMessage(msg Message) error {
 
 func (s *Session) handlePush(m PushMsg) error {
 	exportID := s.nextRemoteImportID()
-	result, err := s.evaluateAndCall(m.Expr)
+	dr := &deferredResult{future: NewFuture()}
+	s.exports.ExportWithID(exportID, dr)
 
-	s.mu.Lock()
-	pulled := s.pulled[exportID]
-	s.mu.Unlock()
-
-	if pulled {
-		return s.sendResult(exportID, result, err)
-	}
-
-	// Not yet pulled — store for when pull arrives.
-	s.exports.ExportWithID(exportID, &deferredResult{val: result, err: err})
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		result, err := s.evaluateAndCall(m.Expr)
+		if err != nil {
+			dr.future.Reject(err)
+		} else {
+			dr.future.Resolve(result)
+		}
+	}()
 	return nil
 }
 
 func (s *Session) handlePull(m PullMsg) error {
 	exportID := m.ImportID
 
-	s.mu.Lock()
-	s.pulled[exportID] = true
-	s.mu.Unlock()
-
 	e := s.exports.Get(exportID)
 	if e == nil {
 		return nil
 	}
 	if dr, ok := e.Target.(*deferredResult); ok {
-		return s.sendResult(exportID, dr.val, dr.err)
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			val, err := dr.future.Await(s.getCtx())
+			_ = s.sendResult(exportID, val, err)
+		}()
 	}
 	return nil
 }
@@ -309,6 +313,31 @@ func (s *Session) handleReject(m RejectMsg) error {
 func (s *Session) handleRelease(m ReleaseMsg) error {
 	s.exports.HandleRelease(m.ImportID, m.RefCount)
 	return nil
+}
+
+func (s *Session) handlePipe(_ PipeMsg) error {
+	exportID := s.nextRemoteImportID()
+	p := newPipe()
+	s.exports.ExportWithID(exportID, p)
+	return nil
+}
+
+// CreatePipe sends a ["pipe"] message to the remote, creating a pipe.
+// Returns a StreamWriter for sending chunks and a ReadableExpr that can
+// be passed as a method argument so the remote can read from the pipe.
+func (s *Session) CreatePipe(ctx context.Context) (*StreamWriter, Expr, error) {
+	s.sendMu.Lock()
+	entry := s.imports.Allocate()
+	pipeErr := s.transport.Send(ctx, PipeMsg{})
+	s.sendMu.Unlock()
+
+	if pipeErr != nil {
+		return nil, nil, fmt.Errorf("capnweb: send pipe: %w", pipeErr)
+	}
+
+	writer := &StreamWriter{session: s, importID: entry.ID}
+	readable := ReadableExpr{ImportID: entry.ID}
+	return writer, readable, nil
 }
 
 func (s *Session) handleStream(m StreamMsg) error {
@@ -378,6 +407,8 @@ func (s *Session) evaluateAndCall(raw json.RawMessage) (any, error) {
 		return s.dispatchCall(e.ImportID, e.Path, e.Args)
 	case PipelineExpr:
 		return s.dispatchCall(e.ImportID, e.Path, e.Args)
+	case RemapExpr:
+		return s.evaluateRemap(e)
 	default:
 		return s.exprToValue(expr), nil
 	}
@@ -392,10 +423,11 @@ func (s *Session) dispatchCall(exportID int64, path []string, args []Expr) (any,
 	target := entry.Target
 	// Unwrap deferred results from prior pipeline stages.
 	if dr, ok := target.(*deferredResult); ok {
-		if dr.err != nil {
-			return nil, dr.err
+		val, err := dr.future.Await(s.getCtx())
+		if err != nil {
+			return nil, err
 		}
-		target = dr.val
+		target = val
 	}
 	if len(path) == 0 {
 		return target, nil
@@ -500,6 +532,17 @@ func (s *Session) exprToValue(e Expr) any {
 	case ExportExpr:
 		entry := s.imports.Insert(v.ExportID)
 		return entry
+	case ReadableExpr:
+		entry := s.exports.Get(v.ImportID)
+		if entry == nil {
+			return nil
+		}
+		if p, ok := entry.Target.(*pipe); ok {
+			return &StreamReader{pipe: p}
+		}
+		return nil
+	case WritableExpr:
+		return &StreamWriter{session: s, importID: v.ExportID}
 	case ArrayExpr:
 		out := make([]any, len(v.Elements))
 		for i, el := range v.Elements {
@@ -527,16 +570,222 @@ func (s *Session) nextRemoteImportID() int64 {
 	return s.remoteImportID
 }
 
+// evaluateRemap evaluates a remap expression — server-side .map() over a
+// collection. Uses a scoped import table where negative IDs reference
+// captures, 0 is the current element, and positive IDs are previous
+// instruction results.
+func (s *Session) evaluateRemap(r RemapExpr) (any, error) {
+	// Resolve the collection.
+	collection, err := s.dispatchCall(r.ImportID, r.Path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	items, ok := collection.([]any)
+	if !ok {
+		return nil, NewTypeError(fmt.Sprintf("remap: expected array, got %T", collection))
+	}
+
+	// Resolve captures.
+	captures := make([]any, len(r.Captures))
+	for i, cap := range r.Captures {
+		captures[i] = s.exprToValue(cap)
+	}
+
+	// Map over elements.
+	results := make([]any, len(items))
+	for i, element := range items {
+		val, err := s.evaluateRemapElement(element, captures, r.Instructions)
+		if err != nil {
+			return nil, fmt.Errorf("remap element %d: %w", i, err)
+		}
+		results[i] = val
+	}
+	return results, nil
+}
+
+func (s *Session) evaluateRemapElement(element any, captures []any, instructions []Expr) (any, error) {
+	// Internal import table: negative → captures, 0 → element, positive → results
+	instrResults := make([]any, 0, len(instructions))
+
+	for _, instr := range instructions {
+		val, err := s.evaluateRemapInstr(instr, element, captures, instrResults)
+		if err != nil {
+			return nil, err
+		}
+		instrResults = append(instrResults, val)
+	}
+
+	if len(instrResults) == 0 {
+		return element, nil
+	}
+	return instrResults[len(instrResults)-1], nil
+}
+
+func (s *Session) evaluateRemapInstr(instr Expr, element any, captures []any, results []any) (any, error) {
+	switch e := instr.(type) {
+	case ImportExpr:
+		target := s.remapResolveID(e.ImportID, element, captures, results)
+		if len(e.Path) == 0 && e.Args == nil {
+			return target, nil
+		}
+		if len(e.Path) > 0 && e.Args == nil {
+			return accessPath(target, e.Path), nil
+		}
+		// Call with args — resolve args in remap scope.
+		resolvedArgs := make([]Expr, len(e.Args))
+		for i, arg := range e.Args {
+			val, err := s.evaluateRemapInstr(arg, element, captures, results)
+			if err != nil {
+				return nil, err
+			}
+			resolvedArgs[i] = LiteralExpr{Value: val}
+		}
+		return s.dispatchCallOnValue(target, e.Path, resolvedArgs)
+	case PipelineExpr:
+		target := s.remapResolveID(e.ImportID, element, captures, results)
+		if len(e.Path) == 0 && e.Args == nil {
+			return target, nil
+		}
+		if len(e.Path) > 0 && e.Args == nil {
+			return accessPath(target, e.Path), nil
+		}
+		resolvedArgs := make([]Expr, len(e.Args))
+		for i, arg := range e.Args {
+			val, err := s.evaluateRemapInstr(arg, element, captures, results)
+			if err != nil {
+				return nil, err
+			}
+			resolvedArgs[i] = LiteralExpr{Value: val}
+		}
+		return s.dispatchCallOnValue(target, e.Path, resolvedArgs)
+	default:
+		return s.exprToValue(instr), nil
+	}
+}
+
+func (s *Session) remapResolveID(id int64, element any, captures []any, results []any) any {
+	switch {
+	case id == 0:
+		return element
+	case id < 0:
+		idx := int(-id - 1)
+		if idx < len(captures) {
+			return captures[idx]
+		}
+		return nil
+	default:
+		idx := int(id - 1)
+		if idx < len(results) {
+			return results[idx]
+		}
+		return nil
+	}
+}
+
+func accessPath(val any, path []string) any {
+	for _, key := range path {
+		m, ok := val.(map[string]any)
+		if !ok {
+			return nil
+		}
+		val = m[key]
+	}
+	return val
+}
+
+// dispatchCallOnValue calls a method on a Go value directly (without export
+// table lookup). Used by remap to call methods on resolved capture values.
+func (s *Session) dispatchCallOnValue(target any, path []string, args []Expr) (any, error) {
+	if target == nil {
+		return nil, NewTypeError("remap: nil target")
+	}
+
+	// If target is an ImportEntry (from a capture), look up the export.
+	if entry, ok := target.(*ImportEntry); ok {
+		return s.dispatchCall(entry.ID, path, args)
+	}
+
+	// If target is an ExportEntry, use its target.
+	if entry, ok := target.(*ExportEntry); ok {
+		target = entry.Target
+	}
+
+	if len(path) == 0 {
+		return target, nil
+	}
+
+	methodName := path[len(path)-1]
+	v := reflect.ValueOf(target)
+	m := v.MethodByName(methodName)
+	if !m.IsValid() {
+		m = v.MethodByName(capitalize(methodName))
+	}
+	if !m.IsValid() {
+		return nil, NewTypeError(fmt.Sprintf("remap: method %q not found on %T", methodName, target))
+	}
+
+	mt := m.Type()
+	callArgs := make([]reflect.Value, 0, mt.NumIn())
+
+	paramIdx := 0
+	if mt.NumIn() > 0 && mt.In(0).Implements(reflect.TypeFor[context.Context]()) {
+		callArgs = append(callArgs, reflect.ValueOf(s.getCtx()))
+		paramIdx = 1
+	}
+
+	for i, arg := range args {
+		goVal := s.exprToValue(arg)
+		idx := paramIdx + i
+		if idx < mt.NumIn() {
+			callArgs = append(callArgs, coerceArg(goVal, mt.In(idx)))
+		} else {
+			callArgs = append(callArgs, reflect.ValueOf(goVal))
+		}
+	}
+
+	results := m.Call(callArgs)
+	return interpretResults(results)
+}
+
 type deferredResult struct {
-	val any
-	err error
+	future *Future
 }
 
 func buildCallExpr(tag string, targetID int64, method string, args []any) (json.RawMessage, error) {
 	if method != "" {
-		return json.Marshal([]any{tag, targetID, method, args})
+		encodedArgs, err := encodeArgs(args)
+		if err != nil {
+			return nil, err
+		}
+		return json.Marshal([]any{tag, targetID, method, encodedArgs})
 	}
 	return json.Marshal([]any{tag, targetID})
+}
+
+// encodeArgs encodes call arguments. Expr values are encoded via EncodeExpr;
+// plain values are encoded via json.Marshal.
+func encodeArgs(args []any) ([]json.RawMessage, error) {
+	if args == nil {
+		return nil, nil
+	}
+	out := make([]json.RawMessage, len(args))
+	for i, arg := range args {
+		if expr, ok := arg.(Expr); ok {
+			encoded, err := EncodeExpr(expr)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = encoded
+		} else {
+			encoded, err := json.Marshal(arg)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = encoded
+		}
+	}
+	return out, nil
 }
 
 func capitalize(s string) string {
