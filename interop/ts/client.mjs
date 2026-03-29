@@ -19,6 +19,8 @@ const methods = {
   doesNotExist: LOWER ? "doesNotExist" : "DoesNotExist",
   getChild: LOWER ? "getChild" : "GetChild",
   childMethod: LOWER ? "childMethod" : "ChildMethod",
+  failTyped: LOWER ? "failTyped" : "FailTyped",
+  collect: LOWER ? "collect" : "Collect",
 };
 
 function send(ws, msg) {
@@ -162,6 +164,92 @@ describe("server interop", () => {
 
     send(ws, ["release", childMethodId, 1]);
     send(ws, ["release", getChildId, 1]);
+  });
+
+  it("pipeline error propagation", async () => {
+    const failId = nextId++;
+    const childId = nextId++;
+
+    // Pipeline: fail → anyMethod. First stage fails, second should inherit error.
+    send(ws, ["push", ["import", 0, [methods.fail], []]]);
+    send(ws, ["push", ["pipeline", failId, ["anyMethod"], []]]);
+    send(ws, ["pull", childId]);
+
+    const msg = await recv(ws);
+    assert.equal(msg[0], "reject");
+    assert.equal(msg[1], childId);
+    assert.equal(msg[2][0], "error");
+    assert.ok(msg[2][2].includes("intentional error"));
+
+    send(ws, ["release", childId, 1]);
+    send(ws, ["release", failId, 1]);
+  });
+
+  it("concurrent calls return correct results", async () => {
+    const n = 10;
+    const ids = [];
+
+    // Send all pushes and pulls at once.
+    for (let i = 0; i < n; i++) {
+      const id = nextId++;
+      ids.push(id);
+      send(ws, ["push", ["import", 0, [methods.add], [i, 1]]]);
+      send(ws, ["pull", id]);
+    }
+
+    // Collect all responses with a single timeout for the whole batch.
+    const results = new Map();
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("timeout waiting for concurrent results")), 10000);
+      const handler = (data) => {
+        const msg = JSON.parse(data.toString());
+        if (msg[0] === "resolve") {
+          results.set(msg[1], msg[2]);
+        }
+        if (results.size >= n) {
+          clearTimeout(timeout);
+          ws.removeListener("message", handler);
+          resolve();
+        }
+      };
+      ws.on("message", handler);
+    });
+
+    // Verify each result.
+    for (let i = 0; i < n; i++) {
+      const val = results.get(ids[i]);
+      assert.equal(val, i + 1, `call ${i}: expected ${i + 1}, got ${val}`);
+    }
+
+    // Release all.
+    for (const id of ids) {
+      send(ws, ["release", id, 1]);
+    }
+  });
+
+  it("streaming: pipe write read close via capnweb client", async () => {
+    // Use the capnweb npm package for streaming (handles pipe/ID tracking).
+    const { newWebSocketRpcSession } = await import("capnweb");
+    const clientWs = new WebSocket(SERVER_URL);
+    await new Promise((resolve) => clientWs.on("open", resolve));
+
+    const stub = newWebSocketRpcSession(clientWs);
+
+    // Create a ReadableStream with chunks.
+    const chunks = ["Hello", ", ", "World", "!"];
+    const readable = new ReadableStream({
+      start(controller) {
+        for (const chunk of chunks) {
+          controller.enqueue(chunk);
+        }
+        controller.close();
+      },
+    });
+
+    const result = await stub[methods.collect](readable);
+    assert.equal(result, "Hello, World!");
+
+    clientWs.close();
   });
 
   it("unknown method returns reject", async () => {
