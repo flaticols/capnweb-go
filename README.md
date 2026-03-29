@@ -1,4 +1,5 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/flaticols/capnweb-go.svg)](https://pkg.go.dev/github.com/flaticols/capnweb-go)
+[![CI](https://github.com/flaticols/capnweb-go/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/flaticols/capnweb-go/actions/workflows/ci.yml)
 [![Release](https://github.com/flaticols/capnweb-go/actions/workflows/release.yml/badge.svg?branch=main)](https://github.com/flaticols/capnweb-go/actions/workflows/release.yml)
 # capnweb-go
 
