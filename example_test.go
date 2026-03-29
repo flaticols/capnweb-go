@@ -94,7 +94,10 @@ func ExampleBatchHandler() {
 	body := `["push",["import",0,["Greet"],["World"]]]` + "\n" +
 		`["pull",1]` + "\n"
 
-	resp, _ := http.Post(srv.URL, "application/x-ndjson", strings.NewReader(body))
+	resp, err := http.Post(srv.URL, "application/x-ndjson", strings.NewReader(body))
+	if err != nil {
+		return
+	}
 	defer resp.Body.Close()
 
 	msgs, _ := capnweb.ReadNDJSON(resp.Body)
