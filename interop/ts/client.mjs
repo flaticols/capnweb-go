@@ -57,7 +57,7 @@ describe("server interop", () => {
 
   it("greet returns greeting string", async () => {
     const id = nextId++;
-    send(ws, ["push", ["import", 0, methods.greet, ["World"]]]);
+    send(ws, ["push", ["import", 0, [methods.greet], ["World"]]]);
     send(ws, ["pull", id]);
 
     const msg = await recv(ws);
@@ -70,7 +70,7 @@ describe("server interop", () => {
 
   it("add returns numeric sum", async () => {
     const id = nextId++;
-    send(ws, ["push", ["import", 0, methods.add, [10, 32]]]);
+    send(ws, ["push", ["import", 0, [methods.add], [10, 32]]]);
     send(ws, ["pull", id]);
 
     const msg = await recv(ws);
@@ -92,7 +92,7 @@ describe("server interop", () => {
 
     for (const { input, expected } of cases) {
       const id = nextId++;
-      send(ws, ["push", ["import", 0, methods.echo, [input]]]);
+      send(ws, ["push", ["import", 0, [methods.echo], [input]]]);
       send(ws, ["pull", id]);
 
       const msg = await recv(ws);
@@ -106,7 +106,7 @@ describe("server interop", () => {
 
   it("fail returns reject with error", async () => {
     const id = nextId++;
-    send(ws, ["push", ["import", 0, methods.fail, []]]);
+    send(ws, ["push", ["import", 0, [methods.fail], []]]);
     send(ws, ["pull", id]);
 
     const msg = await recv(ws);
@@ -120,7 +120,7 @@ describe("server interop", () => {
 
   it("getChild returns export and child method works", async () => {
     const getChildId = nextId++;
-    send(ws, ["push", ["import", 0, methods.getChild, []]]);
+    send(ws, ["push", ["import", 0, [methods.getChild], []]]);
     send(ws, ["pull", getChildId]);
 
     const msg = await recv(ws);
@@ -133,7 +133,7 @@ describe("server interop", () => {
 
     // Call childMethod on the exported child.
     const childMethodId = nextId++;
-    send(ws, ["push", ["import", childExportId, methods.childMethod, []]]);
+    send(ws, ["push", ["import", childExportId, [methods.childMethod], []]]);
     send(ws, ["pull", childMethodId]);
 
     const childMsg = await recv(ws);
@@ -151,8 +151,8 @@ describe("server interop", () => {
     const childMethodId = nextId++;
 
     // Send both pushes before any pull — true pipelining.
-    send(ws, ["push", ["import", 0, methods.getChild, []]]);
-    send(ws, ["push", ["pipeline", getChildId, methods.childMethod, []]]);
+    send(ws, ["push", ["import", 0, [methods.getChild], []]]);
+    send(ws, ["push", ["pipeline", getChildId, [methods.childMethod], []]]);
     send(ws, ["pull", childMethodId]);
 
     const msg = await recv(ws);
@@ -166,7 +166,7 @@ describe("server interop", () => {
 
   it("unknown method returns reject", async () => {
     const id = nextId++;
-    send(ws, ["push", ["import", 0, methods.doesNotExist, []]]);
+    send(ws, ["push", ["import", 0, [methods.doesNotExist], []]]);
     send(ws, ["pull", id]);
 
     const msg = await recv(ws);

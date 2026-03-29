@@ -747,7 +747,7 @@ func buildCallExpr(tag string, targetID int64, method string, args []any) (json.
 		if err != nil {
 			return nil, err
 		}
-		return json.Marshal([]any{tag, targetID, method, encodedArgs})
+		return json.Marshal([]any{tag, targetID, []string{method}, encodedArgs})
 	}
 	return json.Marshal([]any{tag, targetID})
 }
@@ -755,8 +755,8 @@ func buildCallExpr(tag string, targetID int64, method string, args []any) (json.
 // encodeArgs encodes call arguments. Expr values are encoded via EncodeExpr;
 // plain values are encoded via json.Marshal.
 func encodeArgs(args []any) ([]json.RawMessage, error) {
-	if args == nil {
-		return nil, nil
+	if len(args) == 0 {
+		return []json.RawMessage{}, nil
 	}
 	out := make([]json.RawMessage, len(args))
 	for i, arg := range args {
