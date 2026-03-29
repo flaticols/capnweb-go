@@ -49,6 +49,9 @@ func BatchHandler(main any) http.Handler {
 }
 
 // BatchClient sends batches of messages to an HTTP batch endpoint.
+// BatchClient sends batches of RPC messages to an HTTP batch endpoint.
+// Set URL to the batch endpoint. HTTPClient is optional (defaults to
+// http.DefaultClient).
 type BatchClient struct {
 	URL        string
 	HTTPClient *http.Client
