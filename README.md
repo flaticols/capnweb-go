@@ -1,4 +1,4 @@
-[![Go Reference](https://pkg.go.dev/badge/gitHub.com/flaticols/capnweb-go.svg)](https://pkg.go.dev/gitHub.com/flaticols/capnweb-go)
+[![Go Reference](https://pkg.go.dev/badge/github.com/flaticols/capnweb-go.svg)](https://pkg.go.dev/github.com/flaticols/capnweb-go)
 
 # capnweb-go
 
