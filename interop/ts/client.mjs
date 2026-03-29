@@ -20,6 +20,7 @@ const methods = {
   getChild: LOWER ? "getChild" : "GetChild",
   childMethod: LOWER ? "childMethod" : "ChildMethod",
   failTyped: LOWER ? "failTyped" : "FailTyped",
+  collect: LOWER ? "collect" : "Collect",
 };
 
 function send(ws, msg) {
@@ -224,6 +225,31 @@ describe("server interop", () => {
     for (const id of ids) {
       send(ws, ["release", id, 1]);
     }
+  });
+
+  it("streaming: pipe write read close via capnweb client", async () => {
+    // Use the capnweb npm package for streaming (handles pipe/ID tracking).
+    const { newWebSocketRpcSession } = await import("capnweb");
+    const clientWs = new WebSocket(SERVER_URL);
+    await new Promise((resolve) => clientWs.on("open", resolve));
+
+    const stub = newWebSocketRpcSession(clientWs);
+
+    // Create a ReadableStream with chunks.
+    const chunks = ["Hello", ", ", "World", "!"];
+    const readable = new ReadableStream({
+      start(controller) {
+        for (const chunk of chunks) {
+          controller.enqueue(chunk);
+        }
+        controller.close();
+      },
+    });
+
+    const result = await stub[methods.collect](readable);
+    assert.equal(result, "Hello, World!");
+
+    clientWs.close();
   });
 
   it("unknown method returns reject", async () => {
