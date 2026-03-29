@@ -1,6 +1,3 @@
-[![Go Reference](https://pkg.go.dev/badge/github.com/flaticols/capnweb-go.svg)](https://pkg.go.dev/github.com/flaticols/capnweb-go)
-[![CI](https://github.com/flaticols/capnweb-go/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/flaticols/capnweb-go/actions/workflows/ci.yml)
-[![Release](https://github.com/flaticols/capnweb-go/actions/workflows/release.yml/badge.svg?branch=main)](https://github.com/flaticols/capnweb-go/actions/workflows/release.yml)
 # capnweb-go
 
 Go implementation of Cloudflare's [Cap'n Web](https://github.com/nicolo-ribaudo/tc39-proposal-structs/issues/26#issuecomment-2579268997) RPC protocol.
@@ -210,6 +207,10 @@ func (s *Service) Collect(_ context.Context, reader *capnweb.StreamReader) (stri
 ## Status
 
 All core and advanced protocol features are implemented. See the [issue tracker](https://github.com/flaticols/capnweb-go/issues) for details.
+
+[![Go Reference](https://pkg.go.dev/badge/github.com/flaticols/capnweb-go.svg)](https://pkg.go.dev/github.com/flaticols/capnweb-go)
+[![CI](https://github.com/flaticols/capnweb-go/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/flaticols/capnweb-go/actions/workflows/ci.yml)
+[![Release](https://github.com/flaticols/capnweb-go/actions/workflows/release.yml/badge.svg?branch=main)](https://github.com/flaticols/capnweb-go/actions/workflows/release.yml)
 
 ## License
 
