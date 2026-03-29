@@ -5,10 +5,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -23,6 +25,22 @@ func (s *testService) Add(_ context.Context, a, b float64) (float64, error)  { r
 func (s *testService) Greet(_ context.Context, name string) (string, error)  { return "Hello, " + name + "!", nil }
 func (s *testService) Fail(_ context.Context) (any, error)                   { return nil, errors.New("intentional error") }
 func (s *testService) GetChild(_ context.Context) (*childService, error)     { return &childService{}, nil }
+func (s *testService) FailTyped(_ context.Context) (any, error)              { return nil, capnweb.NewTypeError("bad argument") }
+
+func (s *testService) Collect(_ context.Context, reader *capnweb.StreamReader) (string, error) {
+	var sb strings.Builder
+	for {
+		chunk, err := reader.Read(context.Background())
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "", err
+		}
+		sb.WriteString(chunk.(string))
+	}
+	return sb.String(), nil
+}
 
 // childService is an RpcTarget returned by reference.
 type childService struct {
@@ -271,6 +289,88 @@ func runGoClient(t *testing.T, serverURL string) {
 		}
 		if result != "from child" {
 			t.Fatalf("got %v; want 'from child'", result)
+		}
+	})
+
+	t.Run("pipelineErrorPropagation", func(t *testing.T) {
+		failing, err := main.Pipeline(ctx, "fail")
+		if err != nil {
+			t.Fatalf("Pipeline: %v", err)
+		}
+		defer failing.Release(ctx)
+
+		_, err = failing.Call(ctx, "anyMethod")
+		if err == nil {
+			t.Fatal("expected error from pipeline on failed stage")
+		}
+		if !strings.Contains(err.Error(), "intentional error") {
+			t.Fatalf("error = %v; want 'intentional error'", err)
+		}
+	})
+
+	t.Run("concurrentCalls", func(t *testing.T) {
+		const n = 10
+		var wg sync.WaitGroup
+		errs := make([]error, n)
+		results := make([]float64, n)
+
+		for i := range n {
+			wg.Add(1)
+			go func(idx int) {
+				defer wg.Done()
+				r, err := capnweb.Call[float64](ctx, main, "add", float64(idx), 1.0)
+				errs[idx] = err
+				results[idx] = r
+			}(i)
+		}
+		wg.Wait()
+
+		for i := range n {
+			if errs[i] != nil {
+				t.Fatalf("call %d: %v", i, errs[i])
+			}
+			want := float64(i) + 1.0
+			if results[i] != want {
+				t.Fatalf("call %d: got %v; want %v", i, results[i], want)
+			}
+		}
+	})
+
+	t.Run("streaming", func(t *testing.T) {
+		writer, readable, err := client.CreatePipe(ctx)
+		if err != nil {
+			t.Fatalf("CreatePipe: %v", err)
+		}
+
+		resultCh := make(chan string, 1)
+		errCh := make(chan error, 1)
+		go func() {
+			r, err := capnweb.Call[string](ctx, main, "collect", readable)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			resultCh <- r
+		}()
+
+		for _, chunk := range []string{"Hello", ", ", "World", "!"} {
+			if err := writer.Write(ctx, chunk); err != nil {
+				t.Fatalf("Write: %v", err)
+			}
+		}
+		if err := writer.Close(ctx); err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+
+		select {
+		case result := <-resultCh:
+			if result != "Hello, World!" {
+				t.Fatalf("got %v; want 'Hello, World!'", result)
+			}
+		case err := <-errCh:
+			t.Fatalf("collect: %v", err)
+		case <-ctx.Done():
+			t.Fatal("timeout")
 		}
 	})
 }
