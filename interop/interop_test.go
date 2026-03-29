@@ -100,7 +100,7 @@ func startTSServer(t *testing.T) *tsServerProc {
 		"CAPNWEB_PATH="+capnwebPath,
 		"PORT=0", // let OS pick a port — we'll parse from READY line
 	)
-	cmd.Stderr = os.Stderr
+	cmd.WaitDelay = 2 * time.Second
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
