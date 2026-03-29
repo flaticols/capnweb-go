@@ -1,3 +1,5 @@
+[![Go Reference](https://pkg.go.dev/badge/GitHub.com/flaticols/capnweb-go.svg)](https://pkg.go.dev/GitHub.com/flaticols/capnweb-go)
+
 # capnweb-go
 
 Go implementation of Cloudflare's [Cap'n Web](https://github.com/nicolo-ribaudo/tc39-proposal-structs/issues/26#issuecomment-2579268997) RPC protocol.
