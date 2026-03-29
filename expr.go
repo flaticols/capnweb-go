@@ -76,6 +76,7 @@ type ErrorExpr struct {
 
 func (ErrorExpr) expr() {}
 
+// Error implements the error interface, returning "Type: Message".
 func (e ErrorExpr) Error() string {
 	return fmt.Sprintf("%s: %s", e.Type, e.Message)
 }
