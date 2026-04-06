@@ -204,6 +204,10 @@ func (s *Service) Collect(_ context.Context, reader *capnweb.StreamReader) (stri
 }
 ```
 
+## See Also
+
+- [gi-play](https://giplay.flaticols.dev) — interactive playground for capnweb
+
 ## Status
 
 All core and advanced protocol features are implemented. See the [issue tracker](https://github.com/flaticols/capnweb-go/issues) for details.
