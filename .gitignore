@@ -27,3 +27,11 @@ Thumbs.db
 
 # Claude
 .claude/
+
+# Node
+interop/ts/node_modules/
+interop/ts/bun.lock
+interop/ts/package-lock.json
+
+# Build output
+cmd/capnweb/capnweb
