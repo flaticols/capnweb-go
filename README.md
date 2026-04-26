@@ -42,7 +42,7 @@ Both support promise pipelining and capability-based object references — the f
 ## Install
 
 ```bash
-go get github.com/flaticols/capnweb-go
+go get go.flaticols.dev/capnweb-go
 ```
 
 ## Examples
@@ -208,7 +208,7 @@ func (s *Service) Collect(_ context.Context, reader *capnweb.StreamReader) (stri
 
 All core and advanced protocol features are implemented. See the [issue tracker](https://github.com/flaticols/capnweb-go/issues) for details.
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/flaticols/capnweb-go.svg)](https://pkg.go.dev/github.com/flaticols/capnweb-go)
+[![Go Reference](https://pkg.go.dev/badge/go.flaticols.dev/capnweb-go.svg)](https://pkg.go.dev/go.flaticols.dev/capnweb-go)
 [![CI](https://github.com/flaticols/capnweb-go/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/flaticols/capnweb-go/actions/workflows/ci.yml)
 [![Release](https://github.com/flaticols/capnweb-go/actions/workflows/release.yml/badge.svg?branch=main)](https://github.com/flaticols/capnweb-go/actions/workflows/release.yml)
 

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	capnweb "github.com/flaticols/capnweb-go"
+	capnweb "go.flaticols.dev/capnweb-go"
 )
 
 // A Greeter is a simple RPC service. Embed RpcTargetBase to mark it
