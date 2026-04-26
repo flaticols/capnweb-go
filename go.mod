@@ -1,4 +1,4 @@
-module github.com/flaticols/capnweb-go
+module go.flaticols.dev/capnweb-go
 
 go 1.26.1
 

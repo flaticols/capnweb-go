@@ -14,18 +14,24 @@ import (
 	"testing"
 	"time"
 
-	capnweb "github.com/flaticols/capnweb-go"
+	capnweb "go.flaticols.dev/capnweb-go"
 )
 
 // testService is the Go bootstrap object, mirroring the TS TestService.
 type testService struct{}
 
-func (s *testService) Echo(_ context.Context, val any) (any, error)          { return val, nil }
-func (s *testService) Add(_ context.Context, a, b float64) (float64, error)  { return a + b, nil }
-func (s *testService) Greet(_ context.Context, name string) (string, error)  { return "Hello, " + name + "!", nil }
-func (s *testService) Fail(_ context.Context) (any, error)                   { return nil, errors.New("intentional error") }
-func (s *testService) GetChild(_ context.Context) (*childService, error)     { return &childService{}, nil }
-func (s *testService) FailTyped(_ context.Context) (any, error)              { return nil, capnweb.NewTypeError("bad argument") }
+func (s *testService) Echo(_ context.Context, val any) (any, error)         { return val, nil }
+func (s *testService) Add(_ context.Context, a, b float64) (float64, error) { return a + b, nil }
+func (s *testService) Greet(_ context.Context, name string) (string, error) {
+	return "Hello, " + name + "!", nil
+}
+func (s *testService) Fail(_ context.Context) (any, error) {
+	return nil, errors.New("intentional error")
+}
+func (s *testService) GetChild(_ context.Context) (*childService, error) { return &childService{}, nil }
+func (s *testService) FailTyped(_ context.Context) (any, error) {
+	return nil, capnweb.NewTypeError("bad argument")
+}
 
 func (s *testService) Collect(_ context.Context, reader *capnweb.StreamReader) (string, error) {
 	var sb strings.Builder
