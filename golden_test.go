@@ -42,7 +42,9 @@ var goldenExprs = []struct {
 	{"bytes", BytesExpr{Data: []byte("hi")}, `["bytes","aGk"]`},
 	{"bigint", BigIntExpr{Value: big.NewInt(9007199254740993)}, `["bigint","9007199254740993"]`},
 	{"date", DateExpr{Time: time.UnixMilli(1718200000000)}, `["date",1718200000000]`},
-	{"date_invalid", DateExpr{}, `["date",null]`},
+	{"date_invalid", DateExpr{Invalid: true}, `["date",null]`},
+	// The zero time is a real instant (0001-01-01), not an invalid date.
+	{"date_zero", DateExpr{Time: time.Time{}}, `["date",-62135596800000]`},
 
 	// Error: legacy 3-element, 4-element with stack, and 0.8.0 props forms.
 	{"error_basic", ErrorExpr{Type: "Error", Message: "boom"}, `["error","Error","boom"]`},
@@ -242,8 +244,17 @@ func TestGoldenDateInvalidDecode(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected DateExpr, got %T", decoded)
 	}
-	if !d.Time.IsZero() {
-		t.Errorf("invalid date decoded to %v, want zero time", d.Time)
+	if !d.Invalid {
+		t.Errorf("decoded date should be Invalid; got %+v", d)
+	}
+
+	// A real timestamp (incl. the zero instant) is not invalid and round-trips.
+	zero, err := DecodeExpr([]byte(`["date",-62135596800000]`))
+	if err != nil {
+		t.Fatalf("decode zero date: %v", err)
+	}
+	if zd := zero.(DateExpr); zd.Invalid || !zd.Time.IsZero() {
+		t.Errorf("zero-instant date = %+v; want valid zero time", zd)
 	}
 }
 

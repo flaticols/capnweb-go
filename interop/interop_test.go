@@ -74,7 +74,13 @@ func (s *testService) FailWithProps(_ context.Context) (any, error) {
 }
 
 // GetInvalidDate returns the zero time, which encodes as ["date", null].
-func (s *testService) GetInvalidDate(_ context.Context) (time.Time, error) {
+func (s *testService) GetInvalidDate(_ context.Context) (capnweb.Expr, error) {
+	return capnweb.DateExpr{Invalid: true}, nil
+}
+
+// GetZeroTime returns the zero time.Time (0001-01-01) — a real instant that must
+// encode as a timestamp, not as the invalid-date null form.
+func (s *testService) GetZeroTime(_ context.Context) (time.Time, error) {
 	return time.Time{}, nil
 }
 

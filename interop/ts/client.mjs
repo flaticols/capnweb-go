@@ -24,6 +24,7 @@ const methods = {
   makeBlob: LOWER ? "makeBlob" : "MakeBlob",
   failWithProps: LOWER ? "failWithProps" : "FailWithProps",
   getInvalidDate: LOWER ? "getInvalidDate" : "GetInvalidDate",
+  getZeroTime: LOWER ? "getZeroTime" : "GetZeroTime",
   getNumbers: LOWER ? "getNumbers" : "GetNumbers",
   getPeople: LOWER ? "getPeople" : "GetPeople",
   double: LOWER ? "double" : "Double",
@@ -308,6 +309,20 @@ describe("server interop", () => {
     assert.equal(msg[0], "resolve");
     assert.equal(msg[1], id);
     assert.deepEqual(msg[2], ["date", null]);
+
+    send(ws, ["release", id, 1]);
+  });
+
+  it("getZeroTime serializes as a real timestamp, not null", async () => {
+    const id = nextId++;
+    send(ws, ["push", ["import", 0, [methods.getZeroTime], []]]);
+    send(ws, ["pull", id]);
+
+    const msg = await recv(ws);
+    assert.equal(msg[0], "resolve");
+    assert.equal(msg[1], id);
+    // 0001-01-01T00:00:00Z in unix millis.
+    assert.deepEqual(msg[2], ["date", -62135596800000]);
 
     send(ws, ["release", id, 1]);
   });
