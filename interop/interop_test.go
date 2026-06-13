@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"os"
 	"os/exec"
@@ -89,6 +90,13 @@ func (s *testService) GetPeople(_ context.Context) ([]any, error) {
 
 func (s *testService) Double(_ context.Context, n float64) (float64, error) {
 	return n * 2, nil
+}
+
+// BigNumber returns an integer beyond float64 precision; exercises ["bigint",...]
+// encoding so the value survives instead of being truncated to a float.
+func (s *testService) BigNumber(_ context.Context) (*big.Int, error) {
+	n, _ := new(big.Int).SetString("123456789012345678901234567890", 10)
+	return n, nil
 }
 
 // childService is an RpcTarget returned by reference.
@@ -455,6 +463,17 @@ func runGoClient(t *testing.T, serverURL string) {
 		}
 		if !reflect.DeepEqual(result, in) {
 			t.Fatalf("echo object = %#v; want %#v", result, in)
+		}
+	})
+
+	t.Run("bigint", func(t *testing.T) {
+		// TS server returns a BigInt; Go must receive the exact *big.Int.
+		result, err := capnweb.Call[*big.Int](ctx, main, "bigNumber")
+		if err != nil {
+			t.Fatalf("bigNumber: %v", err)
+		}
+		if result == nil || result.String() != "123456789012345678901234567890" {
+			t.Fatalf("bigNumber = %v; want 123456789012345678901234567890", result)
 		}
 	})
 
