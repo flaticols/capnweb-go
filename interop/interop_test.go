@@ -105,6 +105,14 @@ func (s *testService) GetBytes(_ context.Context) (capnweb.Expr, error) {
 	return capnweb.BytesExpr{Data: []byte{0xDE, 0xAD}}, nil
 }
 
+// GetHeaders returns headers with a duplicated field; exercises comma-combining.
+func (s *testService) GetHeaders(_ context.Context) (capnweb.Expr, error) {
+	h := http.Header{}
+	h.Add("X-Multi", "a")
+	h.Add("X-Multi", "b")
+	return capnweb.HeadersExpr{Header: h}, nil
+}
+
 // childService is an RpcTarget returned by reference.
 type childService struct {
 	capnweb.RpcTargetBase
@@ -492,6 +500,18 @@ func runGoClient(t *testing.T, serverURL string) {
 		}
 		if !bytes.Equal(result, []byte{0xDE, 0xAD}) {
 			t.Fatalf("getBytes = %v; want [222 173]", result)
+		}
+	})
+
+	t.Run("headers", func(t *testing.T) {
+		// TS server returns a Headers with a duplicated field; the reference
+		// combines the values, and Go must receive the combined form.
+		result, err := capnweb.Call[http.Header](ctx, main, "getHeaders")
+		if err != nil {
+			t.Fatalf("getHeaders: %v", err)
+		}
+		if got := result.Get("X-Multi"); got != "a, b" {
+			t.Fatalf("X-Multi = %q; want \"a, b\"", got)
 		}
 	})
 

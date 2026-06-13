@@ -100,6 +100,15 @@ class TestService extends RpcTarget {
   getBytes() {
     return new Uint8Array([0xde, 0xad]);
   }
+
+  // getHeaders returns a Headers object with a duplicated field; the iterator
+  // combines the values with ", ".
+  getHeaders() {
+    const h = new Headers();
+    h.append("x-multi", "a");
+    h.append("x-multi", "b");
+    return h;
+  }
 }
 
 class ChildService extends RpcTarget {

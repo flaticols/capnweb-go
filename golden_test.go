@@ -80,6 +80,8 @@ var goldenExprs = []struct {
 
 	// HTTP types.
 	{"headers", HeadersExpr{Header: http.Header{"X-A": {"1"}}}, `["headers",[["X-A","1"]]]`},
+	// Duplicate values for a field are comma-combined into one pair.
+	{"headers_multi", HeadersExpr{Header: http.Header{"X-A": {"1", "2"}}}, `["headers",[["X-A","1, 2"]]]`},
 
 	// Remap.
 	{
