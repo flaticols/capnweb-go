@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 )
@@ -744,12 +745,15 @@ func decodeRemapExpr(raw []json.RawMessage) (Expr, error) {
 // --- encoding helpers ---
 
 func headerPairs(h http.Header) [][2]string {
+	//nolint:prealloc // keep nil for an empty header so it encodes as null (see #49)
 	var pairs [][2]string
 	for name, vals := range h {
-		for _, v := range vals {
-			pairs = append(pairs, [2]string{name, v})
-		}
+		// The Fetch Headers iterator combines duplicate values for a field into
+		// one ", "-joined entry; emit one pair per name to match.
+		pairs = append(pairs, [2]string{name, strings.Join(vals, ", ")})
 	}
+	// Sort by name so the wire output is deterministic.
+	sort.Slice(pairs, func(i, j int) bool { return pairs[i][0] < pairs[j][0] })
 	return pairs
 }
 
