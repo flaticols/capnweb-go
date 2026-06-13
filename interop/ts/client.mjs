@@ -24,6 +24,9 @@ const methods = {
   makeBlob: LOWER ? "makeBlob" : "MakeBlob",
   failWithProps: LOWER ? "failWithProps" : "FailWithProps",
   getInvalidDate: LOWER ? "getInvalidDate" : "GetInvalidDate",
+  getNumbers: LOWER ? "getNumbers" : "GetNumbers",
+  getPeople: LOWER ? "getPeople" : "GetPeople",
+  double: LOWER ? "double" : "Double",
 };
 
 function send(ws, msg) {
@@ -316,6 +319,36 @@ describe("server interop", () => {
 
     const obj = { nums: [1, 2], label: "x", nested: { deep: [5] } };
     assert.deepEqual(await stub[methods.echo](obj), obj);
+
+    clientWs.close();
+  });
+
+  it("map() with object-literal instruction (remap nested refs)", async () => {
+    // .map() generates a remap; returning an object literal exercises nested
+    // pipeline-ref resolution inside object instructions on the Go server.
+    const { newWebSocketRpcSession } = await import("capnweb");
+    const clientWs = new WebSocket(SERVER_URL);
+    await new Promise((resolve) => clientWs.on("open", resolve));
+    const stub = newWebSocketRpcSession(clientWs);
+
+    const people = stub[methods.getPeople]();
+    const result = await people.map((p) => ({ greeting: p.name }));
+    assert.deepEqual(result, [{ greeting: "Alice" }, { greeting: "Bob" }]);
+
+    clientWs.close();
+  });
+
+  it("map() capturing a stub and calling it (remap capture)", async () => {
+    // The mapper captures `stub` (the bootstrap) and calls a method on it —
+    // exercises remap capture resolution against the receiver's export table.
+    const { newWebSocketRpcSession } = await import("capnweb");
+    const clientWs = new WebSocket(SERVER_URL);
+    await new Promise((resolve) => clientWs.on("open", resolve));
+    const stub = newWebSocketRpcSession(clientWs);
+
+    const nums = stub[methods.getNumbers]();
+    const result = await nums.map((n) => stub[methods.double](n));
+    assert.deepEqual(result, [2, 4, 6]);
 
     clientWs.close();
   });

@@ -75,6 +75,22 @@ func (s *testService) GetInvalidDate(_ context.Context) (time.Time, error) {
 	return time.Time{}, nil
 }
 
+// GetNumbers / GetPeople / Double back the remap (.map()) interop tests.
+func (s *testService) GetNumbers(_ context.Context) ([]any, error) {
+	return []any{1.0, 2.0, 3.0}, nil
+}
+
+func (s *testService) GetPeople(_ context.Context) ([]any, error) {
+	return []any{
+		map[string]any{"name": "Alice"},
+		map[string]any{"name": "Bob"},
+	}, nil
+}
+
+func (s *testService) Double(_ context.Context, n float64) (float64, error) {
+	return n * 2, nil
+}
+
 // childService is an RpcTarget returned by reference.
 type childService struct {
 	capnweb.RpcTargetBase

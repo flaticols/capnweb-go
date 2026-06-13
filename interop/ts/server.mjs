@@ -77,6 +77,19 @@ class TestService extends RpcTarget {
   getInvalidDate() {
     return new Date(NaN);
   }
+
+  // getNumbers / getPeople / double back the remap (.map()) interop tests.
+  getNumbers() {
+    return [1, 2, 3];
+  }
+
+  getPeople() {
+    return [{ name: "Alice" }, { name: "Bob" }];
+  }
+
+  double(n) {
+    return n * 2;
+  }
 }
 
 class ChildService extends RpcTarget {
