@@ -316,7 +316,7 @@ func encodeRequestExpr(v RequestExpr) (json.RawMessage, error) {
 	if v.Method != "" {
 		init["method"] = v.Method
 	}
-	if v.Headers != nil {
+	if len(v.Headers) > 0 {
 		init["headers"] = headerPairs(v.Headers)
 	}
 	if v.Body != nil {
@@ -337,7 +337,7 @@ func encodeResponseExpr(v ResponseExpr) (json.RawMessage, error) {
 	if v.StatusText != "" {
 		init["statusText"] = v.StatusText
 	}
-	if v.Headers != nil {
+	if len(v.Headers) > 0 {
 		init["headers"] = headerPairs(v.Headers)
 	}
 	body, err := encodeOptionalBody(v.Body)
@@ -745,8 +745,9 @@ func decodeRemapExpr(raw []json.RawMessage) (Expr, error) {
 // --- encoding helpers ---
 
 func headerPairs(h http.Header) [][2]string {
-	//nolint:prealloc // keep nil for an empty header so it encodes as null (see #49)
-	var pairs [][2]string
+	// Non-nil so an empty header encodes as [] (not null), matching the
+	// reference's array-of-pairs form.
+	pairs := make([][2]string, 0, len(h))
 	for name, vals := range h {
 		// The Fetch Headers iterator combines duplicate values for a field into
 		// one ", "-joined entry; emit one pair per name to match.

@@ -31,6 +31,7 @@ const methods = {
   getBytes: LOWER ? "getBytes" : "GetBytes",
   getHeaders: LOWER ? "getHeaders" : "GetHeaders",
   getSpecialFloats: LOWER ? "getSpecialFloats" : "GetSpecialFloats",
+  getEmptyHeaders: LOWER ? "getEmptyHeaders" : "GetEmptyHeaders",
 };
 
 function send(ws, msg) {
@@ -407,6 +408,18 @@ describe("server interop", () => {
     assert.equal(arr[0], Infinity);
     assert.equal(arr[1], -Infinity);
     assert.ok(Number.isNaN(arr[2]));
+
+    clientWs.close();
+  });
+
+  it("getEmptyHeaders encodes as [] and is accepted by the reference", async () => {
+    const { newWebSocketRpcSession } = await import("capnweb");
+    const clientWs = new WebSocket(SERVER_URL);
+    await new Promise((resolve) => clientWs.on("open", resolve));
+    const stub = newWebSocketRpcSession(clientWs);
+
+    const h = await stub[methods.getEmptyHeaders]();
+    assert.equal([...h].length, 0);
 
     clientWs.close();
   });

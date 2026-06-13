@@ -114,6 +114,11 @@ class TestService extends RpcTarget {
   getSpecialFloats() {
     return [Infinity, -Infinity, NaN];
   }
+
+  // getEmptyHeaders returns an empty Headers object.
+  getEmptyHeaders() {
+    return new Headers();
+  }
 }
 
 class ChildService extends RpcTarget {

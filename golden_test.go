@@ -82,6 +82,8 @@ var goldenExprs = []struct {
 	{"headers", HeadersExpr{Header: http.Header{"X-A": {"1"}}}, `["headers",[["X-A","1"]]]`},
 	// Duplicate values for a field are comma-combined into one pair.
 	{"headers_multi", HeadersExpr{Header: http.Header{"X-A": {"1", "2"}}}, `["headers",[["X-A","1, 2"]]]`},
+	// An empty header is an empty array, not null.
+	{"headers_empty", HeadersExpr{Header: http.Header{}}, `["headers",[]]`},
 
 	// Remap.
 	{
@@ -158,6 +160,27 @@ func TestEscapedArrayDecode(t *testing.T) {
 	}
 	if len(arr.Elements) != 3 {
 		t.Fatalf("expected 3 elements, got %d", len(arr.Elements))
+	}
+}
+
+// TestEmptyHeadersOmittedInInit verifies request/response init omits the
+// "headers" key entirely when the header set is empty (rather than emitting
+// "headers":null).
+func TestEmptyHeadersOmittedInInit(t *testing.T) {
+	got, err := EncodeExpr(RequestExpr{URL: "http://x", Method: "GET", Headers: http.Header{}})
+	if err != nil {
+		t.Fatalf("encode request: %v", err)
+	}
+	var arr []json.RawMessage
+	if err := json.Unmarshal(got, &arr); err != nil || len(arr) != 3 {
+		t.Fatalf("bad request wire %s: %v", got, err)
+	}
+	var init map[string]json.RawMessage
+	if err := json.Unmarshal(arr[2], &init); err != nil {
+		t.Fatalf("bad init: %v", err)
+	}
+	if _, present := init["headers"]; present {
+		t.Errorf("init should omit empty headers; got %s", arr[2])
 	}
 }
 
