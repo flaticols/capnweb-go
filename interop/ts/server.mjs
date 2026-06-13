@@ -109,6 +109,11 @@ class TestService extends RpcTarget {
     h.append("x-multi", "b");
     return h;
   }
+
+  // getSpecialFloats returns the non-finite floats.
+  getSpecialFloats() {
+    return [Infinity, -Infinity, NaN];
+  }
 }
 
 class ChildService extends RpcTarget {

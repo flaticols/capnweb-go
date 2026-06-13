@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"math/big"
 	"net/http"
 	"os"
@@ -111,6 +112,11 @@ func (s *testService) GetHeaders(_ context.Context) (capnweb.Expr, error) {
 	h.Add("X-Multi", "a")
 	h.Add("X-Multi", "b")
 	return capnweb.HeadersExpr{Header: h}, nil
+}
+
+// GetSpecialFloats returns the non-finite floats; exercises ["inf"]/["-inf"]/["nan"].
+func (s *testService) GetSpecialFloats(_ context.Context) ([]any, error) {
+	return []any{math.Inf(1), math.Inf(-1), math.NaN()}, nil
 }
 
 // childService is an RpcTarget returned by reference.
@@ -512,6 +518,26 @@ func runGoClient(t *testing.T, serverURL string) {
 		}
 		if got := result.Get("X-Multi"); got != "a, b" {
 			t.Fatalf("X-Multi = %q; want \"a, b\"", got)
+		}
+	})
+
+	t.Run("specialFloats", func(t *testing.T) {
+		// TS server returns [Infinity, -Infinity, NaN] as ["inf"]/["-inf"]/["nan"].
+		result, err := capnweb.Call[[]any](ctx, main, "getSpecialFloats")
+		if err != nil {
+			t.Fatalf("getSpecialFloats: %v", err)
+		}
+		if len(result) != 3 {
+			t.Fatalf("got %d values; want 3", len(result))
+		}
+		if f, _ := result[0].(float64); !math.IsInf(f, 1) {
+			t.Errorf("[0] = %v; want +Inf", result[0])
+		}
+		if f, _ := result[1].(float64); !math.IsInf(f, -1) {
+			t.Errorf("[1] = %v; want -Inf", result[1])
+		}
+		if f, _ := result[2].(float64); !math.IsNaN(f) {
+			t.Errorf("[2] = %v; want NaN", result[2])
 		}
 	})
 
