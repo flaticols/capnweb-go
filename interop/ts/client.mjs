@@ -30,6 +30,7 @@ const methods = {
   bigNumber: LOWER ? "bigNumber" : "BigNumber",
   getBytes: LOWER ? "getBytes" : "GetBytes",
   getHeaders: LOWER ? "getHeaders" : "GetHeaders",
+  getSpecialFloats: LOWER ? "getSpecialFloats" : "GetSpecialFloats",
 };
 
 function send(ws, msg) {
@@ -392,6 +393,20 @@ describe("server interop", () => {
 
     const h = await stub[methods.getHeaders]();
     assert.equal(h.get("x-multi"), "a, b");
+
+    clientWs.close();
+  });
+
+  it("getSpecialFloats round-trips Infinity/-Infinity/NaN from the Go server", async () => {
+    const { newWebSocketRpcSession } = await import("capnweb");
+    const clientWs = new WebSocket(SERVER_URL);
+    await new Promise((resolve) => clientWs.on("open", resolve));
+    const stub = newWebSocketRpcSession(clientWs);
+
+    const arr = await stub[methods.getSpecialFloats]();
+    assert.equal(arr[0], Infinity);
+    assert.equal(arr[1], -Infinity);
+    assert.ok(Number.isNaN(arr[2]));
 
     clientWs.close();
   });

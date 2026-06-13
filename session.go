@@ -498,6 +498,17 @@ func (s *Session) valueToExpr(val any) (Expr, error) {
 		return BigIntExpr{Value: b}, nil
 	case big.Int:
 		return BigIntExpr{Value: &b}, nil
+	case float64:
+		// Non-finite floats need the special tags; json.Marshal would error.
+		if e, ok := nonFiniteFloatExpr(b); ok {
+			return e, nil
+		}
+		return LiteralExpr{Value: b}, nil
+	case float32:
+		if e, ok := nonFiniteFloatExpr(float64(b)); ok {
+			return e, nil
+		}
+		return LiteralExpr{Value: b}, nil
 	}
 	if _, ok := val.(RpcTarget); ok {
 		entry := s.exports.Export(val)
@@ -511,6 +522,21 @@ func (s *Session) valueToExpr(val any) (Expr, error) {
 		return e, err
 	}
 	return LiteralExpr{Value: val}, nil
+}
+
+// nonFiniteFloatExpr maps the non-finite floats to their tagged expressions.
+// The second return is false for finite values (encode them as literals).
+func nonFiniteFloatExpr(f float64) (Expr, bool) {
+	switch {
+	case math.IsInf(f, 1):
+		return InfExpr{}, true
+	case math.IsInf(f, -1):
+		return NegInfExpr{}, true
+	case math.IsNaN(f):
+		return NaNExpr{}, true
+	default:
+		return nil, false
+	}
 }
 
 // collectionToExpr recursively devalues slices/arrays (→ ArrayExpr) and
