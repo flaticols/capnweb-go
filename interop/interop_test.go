@@ -119,6 +119,12 @@ func (s *testService) GetSpecialFloats(_ context.Context) ([]any, error) {
 	return []any{math.Inf(1), math.Inf(-1), math.NaN()}, nil
 }
 
+// GetEmptyHeaders returns an empty header set; must encode as ["headers",[]],
+// which the reference accepts (it rejects the old ["headers",null] form).
+func (s *testService) GetEmptyHeaders(_ context.Context) (capnweb.Expr, error) {
+	return capnweb.HeadersExpr{Header: http.Header{}}, nil
+}
+
 // childService is an RpcTarget returned by reference.
 type childService struct {
 	capnweb.RpcTargetBase
