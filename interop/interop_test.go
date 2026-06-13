@@ -2,6 +2,7 @@ package interop
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -97,6 +98,11 @@ func (s *testService) Double(_ context.Context, n float64) (float64, error) {
 func (s *testService) BigNumber(_ context.Context) (*big.Int, error) {
 	n, _ := new(big.Int).SetString("123456789012345678901234567890", 10)
 	return n, nil
+}
+
+// GetBytes returns a byte expression; exercises ["bytes", base64] (unpadded).
+func (s *testService) GetBytes(_ context.Context) (capnweb.Expr, error) {
+	return capnweb.BytesExpr{Data: []byte{0xDE, 0xAD}}, nil
 }
 
 // childService is an RpcTarget returned by reference.
@@ -474,6 +480,18 @@ func runGoClient(t *testing.T, serverURL string) {
 		}
 		if result == nil || result.String() != "123456789012345678901234567890" {
 			t.Fatalf("bigNumber = %v; want 123456789012345678901234567890", result)
+		}
+	})
+
+	t.Run("bytes", func(t *testing.T) {
+		// TS server returns a Uint8Array, encoded as unpadded base64; Go must
+		// decode it rather than rejecting the missing padding.
+		result, err := capnweb.Call[[]byte](ctx, main, "getBytes")
+		if err != nil {
+			t.Fatalf("getBytes: %v", err)
+		}
+		if !bytes.Equal(result, []byte{0xDE, 0xAD}) {
+			t.Fatalf("getBytes = %v; want [222 173]", result)
 		}
 	})
 

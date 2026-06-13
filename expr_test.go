@@ -28,7 +28,7 @@ func TestEncodeExpr(t *testing.T) {
 		{name: "nan", expr: NaNExpr{}, want: `["nan"]`},
 
 		// Data types
-		{name: "bytes", expr: BytesExpr{Data: []byte{0xDE, 0xAD}}, want: `["bytes","3q0="]`},
+		{name: "bytes", expr: BytesExpr{Data: []byte{0xDE, 0xAD}}, want: `["bytes","3q0"]`},
 		{name: "bytes empty", expr: BytesExpr{Data: []byte{}}, want: `["bytes",""]`},
 		{name: "bigint", expr: BigIntExpr{Value: big.NewInt(999999999999)}, want: `["bigint","999999999999"]`},
 		{name: "bigint negative", expr: BigIntExpr{Value: big.NewInt(-42)}, want: `["bigint","-42"]`},
@@ -211,6 +211,8 @@ func TestDecodeExpr(t *testing.T) {
 
 		// Data types
 		{name: "bytes", wire: `["bytes","3q0="]`, want: BytesExpr{Data: []byte{0xDE, 0xAD}}},
+		{name: "bytes unpadded", wire: `["bytes","3q0"]`, want: BytesExpr{Data: []byte{0xDE, 0xAD}}},
+		{name: "bytes unpadded single", wire: `["bytes","AQ"]`, want: BytesExpr{Data: []byte{1}}},
 		{name: "bigint", wire: `["bigint","999999999999"]`, want: BigIntExpr{Value: big.NewInt(999999999999)}},
 		{name: "date", wire: `["date",1700000000000]`, want: DateExpr{Time: time.UnixMilli(1700000000000)}},
 		{name: "error", wire: `["error","TypeError","bad"]`, want: ErrorExpr{Type: "TypeError", Message: "bad"}},

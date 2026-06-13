@@ -39,7 +39,7 @@ var goldenExprs = []struct {
 	{"nan", NaNExpr{}, `["nan"]`},
 
 	// Data types.
-	{"bytes", BytesExpr{Data: []byte("hi")}, `["bytes","aGk="]`},
+	{"bytes", BytesExpr{Data: []byte("hi")}, `["bytes","aGk"]`},
 	{"bigint", BigIntExpr{Value: big.NewInt(9007199254740993)}, `["bigint","9007199254740993"]`},
 	{"date", DateExpr{Time: time.UnixMilli(1718200000000)}, `["date",1718200000000]`},
 	{"date_invalid", DateExpr{}, `["date",null]`},
