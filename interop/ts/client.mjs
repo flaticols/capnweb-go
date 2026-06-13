@@ -28,6 +28,7 @@ const methods = {
   getPeople: LOWER ? "getPeople" : "GetPeople",
   double: LOWER ? "double" : "Double",
   bigNumber: LOWER ? "bigNumber" : "BigNumber",
+  getBytes: LOWER ? "getBytes" : "GetBytes",
 };
 
 function send(ws, msg) {
@@ -365,6 +366,19 @@ describe("server interop", () => {
     const n = await stub[methods.bigNumber]();
     assert.equal(typeof n, "bigint");
     assert.equal(n, 123456789012345678901234567890n);
+
+    clientWs.close();
+  });
+
+  it("getBytes returns the exact bytes from the Go server (base64)", async () => {
+    const { newWebSocketRpcSession } = await import("capnweb");
+    const clientWs = new WebSocket(SERVER_URL);
+    await new Promise((resolve) => clientWs.on("open", resolve));
+    const stub = newWebSocketRpcSession(clientWs);
+
+    const b = await stub[methods.getBytes]();
+    assert.ok(b instanceof Uint8Array, `expected Uint8Array, got ${typeof b}`);
+    assert.deepEqual([...b], [0xde, 0xad]);
 
     clientWs.close();
   });

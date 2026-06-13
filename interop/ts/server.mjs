@@ -95,6 +95,11 @@ class TestService extends RpcTarget {
   bigNumber() {
     return 123456789012345678901234567890n;
   }
+
+  // getBytes returns a Uint8Array (serialized as unpadded base64).
+  getBytes() {
+    return new Uint8Array([0xde, 0xad]);
+  }
 }
 
 class ChildService extends RpcTarget {

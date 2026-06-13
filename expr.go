@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -224,7 +225,8 @@ func EncodeExpr(e Expr) (json.RawMessage, error) {
 	case NaNExpr:
 		return json.Marshal([]string{"nan"})
 	case BytesExpr:
-		return json.Marshal([]any{"bytes", base64.StdEncoding.EncodeToString(v.Data)})
+		// Spec emits unpadded standard base64 (Uint8Array.toBase64{omitPadding}).
+		return json.Marshal([]any{"bytes", base64.RawStdEncoding.EncodeToString(v.Data)})
 	case BlobExpr:
 		return encodeBlobExpr(v)
 	case BigIntExpr:
@@ -544,7 +546,9 @@ func decodeBytesExpr(raw []json.RawMessage) (Expr, error) {
 	if err := json.Unmarshal(raw[1], &s); err != nil {
 		return nil, fmt.Errorf("capnweb: bytes: %w", err)
 	}
-	b, err := base64.StdEncoding.DecodeString(s)
+	// Accept both unpadded (spec/JS) and padded base64 by stripping any padding
+	// and decoding with the raw (unpadded) decoder.
+	b, err := base64.RawStdEncoding.DecodeString(strings.TrimRight(s, "="))
 	if err != nil {
 		return nil, fmt.Errorf("capnweb: bytes base64: %w", err)
 	}
