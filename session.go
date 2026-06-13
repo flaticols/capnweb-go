@@ -673,7 +673,7 @@ func (s *Session) evaluateRemap(r *RemapExpr) (any, error) {
 	// Resolve captures.
 	captures := make([]any, len(r.Captures))
 	for i, cap := range r.Captures {
-		captures[i] = s.exprToValue(cap)
+		captures[i] = s.resolveCapture(cap)
 	}
 
 	// Map over elements.
@@ -706,6 +706,25 @@ func (s *Session) evaluateRemapElement(element any, captures []any, instructions
 	return instrResults[len(instrResults)-1], nil
 }
 
+// resolveCapture resolves a remap capture reference. Per the spec, a capture is
+// ["import", id] — an entry on our own exports table (the peer is importing it)
+// — or ["export", id] — a new object the peer exported, which we import as a
+// stub. Anything else is treated as a plain value.
+func (s *Session) resolveCapture(capture Expr) any {
+	switch c := capture.(type) {
+	case ImportExpr:
+		if entry := s.exports.Get(c.ImportID); entry != nil {
+			return entry.Target
+		}
+		return nil
+	case ExportExpr:
+		entry := s.imports.Insert(c.ExportID)
+		return newStub(s, entry.ID)
+	default:
+		return s.exprToValue(capture)
+	}
+}
+
 func (s *Session) evaluateRemapInstr(instr Expr, element any, captures, results []any) (any, error) {
 	switch e := instr.(type) {
 	case ImportExpr:
@@ -714,6 +733,29 @@ func (s *Session) evaluateRemapInstr(instr Expr, element any, captures, results 
 	case PipelineExpr:
 		target := s.remapResolveID(e.ImportID, element, captures, results)
 		return s.remapEvalRef(target, e.Path, e.Args, element, captures, results)
+	case ArrayExpr:
+		// Array literal instruction — resolve each element in the remap scope
+		// so nested pipeline/import refs are substituted, not left as raw refs.
+		out := make([]any, len(e.Elements))
+		for i, el := range e.Elements {
+			v, err := s.evaluateRemapInstr(el, element, captures, results)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = v
+		}
+		return out, nil
+	case ObjectExpr:
+		// Object literal instruction — same recursive resolution per field.
+		out := make(map[string]any, len(e.Fields))
+		for k, el := range e.Fields {
+			v, err := s.evaluateRemapInstr(el, element, captures, results)
+			if err != nil {
+				return nil, err
+			}
+			out[k] = v
+		}
+		return out, nil
 	default:
 		return s.exprToValue(instr), nil
 	}

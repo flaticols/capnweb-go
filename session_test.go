@@ -506,14 +506,16 @@ func TestRemapWithCapture(t *testing.T) {
 	go func() { _ = client.Run(ctx) }()
 
 	// Remap: GetPeople().map(x => service.Greet(x.name))
-	// Capture: the bootstrap service (export 0)
+	// Capture: the bootstrap service. It lives on the receiver's export table,
+	// so per spec it is referenced as ["import", 0] (an entry on our exports),
+	// not ["export", 0] (which would import a new stub).
 	// Instructions:
 	//   1. Get x.name → result 1
 	//   2. Call capture[0].Greet(result1) → result 2
 	remapExpr := RemapExpr{
 		ImportID: 0,
 		Path:     []string{"GetPeople"},
-		Captures: []Expr{ExportExpr{ExportID: 0}},
+		Captures: []Expr{ImportExpr{ImportID: 0}},
 		Instructions: []Expr{
 			ImportExpr{ImportID: 0, Path: []string{"name"}},
 			PipelineExpr{ImportID: -1, Path: []string{"Greet"}, Args: []Expr{
