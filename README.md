@@ -4,14 +4,44 @@ Go implementation of Cloudflare's [Cap'n Web](https://github.com/cloudflare/capn
 
 No code generation: export any Go struct with methods as an RPC target and call remote methods through typed stubs.
 
-## Features
+## Protocol support
 
-- **Bidirectional RPC** — either side can call the other; there is no fixed "client" or "server"
-- **Promise pipelining** — chain dependent calls without waiting for intermediate results, collapsing multiple round trips into one
-- **Pass-by-reference** — objects can be exported as stubs and called remotely, with automatic reference counting
-- **Streaming** — multiplexed ReadableStream/WritableStream over a single connection
-- **Server-side `.map()`** — send transformation recipes to run on remote collections without per-element round trips
-- **WebSocket and HTTP batch transports** out of the box, with a pluggable `Transport` interface
+Complete implementation of the capnweb 0.8.0 wire protocol — all eight message
+types and every value type in the reference `serialize.ts`, validated against
+the TypeScript implementation in both directions.
+
+**Transports**
+
+| Original | Ported | Go API |
+|---|---|---|
+| WebSocket (`newWebSocketRpcSession`) | Yes | `WSDial` / `WSAccept` |
+| HTTP batch (`newHttpBatchRpcSession`) | Yes | `BatchHandler` / `BatchClient` |
+| MessagePort (`newMessagePortRpcSession`) | No | browser/Worker-only; no Go analog |
+
+Custom framing is supported via the pluggable `Transport` interface.
+
+**RPC features** (all supported)
+
+- Bidirectional RPC — either side can export objects and call the other
+- Promise pipelining — chain dependent calls in one round trip
+- Pass-by-reference stubs with automatic reference counting
+- Server-side `.map()` (remap), including captures and nested instructions
+- Streaming — `ReadableStream` / `WritableStream` over one connection
+
+**Serializable value types** (all supported)
+
+- Primitives (string / number / boolean / null), `undefined`
+- `Infinity` / `-Infinity` / `NaN`, `BigInt`, `Date` (including invalid)
+- `Uint8Array` (bytes), `Blob`
+- `Error` — with own enumerable properties, `cause`, and AggregateError `errors`
+- `Headers`, `Request`, `Response`
+- Arrays (escaped) and objects, recursively
+- Capability stubs (`import` / `export` / `promise` / `pipeline`) and streams (`readable` / `writable`)
+
+**Not ported**
+
+- The MessagePort transport (browser/Worker-only).
+- `capnweb-validate`, the reference's build-time **TypeScript** type-validator, has no Go analog. Wire conformance here is enforced instead by golden wire-vectors and the cross-language interop suite.
 
 ## Install
 
@@ -180,7 +210,7 @@ func (s *Service) Collect(_ context.Context, reader *capnweb.StreamReader) (stri
 
 ## Status
 
-All core and advanced protocol features are implemented. See the [issue tracker](https://github.com/flaticols/capnweb-go/issues) for details.
+See the [issue tracker](https://github.com/flaticols/capnweb-go/issues) for known gaps and follow-ups.
 
 [![Go Reference](https://pkg.go.dev/badge/go.flaticols.dev/capnweb-go.svg)](https://pkg.go.dev/go.flaticols.dev/capnweb-go)
 [![CI](https://github.com/flaticols/capnweb-go/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/flaticols/capnweb-go/actions/workflows/ci.yml)
