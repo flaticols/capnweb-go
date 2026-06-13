@@ -75,8 +75,8 @@ var goldenExprs = []struct {
 	{"writable", WritableExpr{ExportID: 2}, `["writable",2]`},
 	{"readable", ReadableExpr{ImportID: 4}, `["readable",4]`},
 	{"import_bare", ImportExpr{ImportID: 1}, `["import",1]`},
-	{"import_call", ImportExpr{ImportID: 1, Path: []string{"add"}, Args: []Expr{LiteralExpr{Value: float64(1)}, LiteralExpr{Value: float64(2)}}}, `["import",1,"add",[1,2]]`},
-	{"pipeline_call", PipelineExpr{ImportID: 2, Path: []string{"foo"}, Args: []Expr{}}, `["pipeline",2,"foo",[]]`},
+	{"import_call", ImportExpr{ImportID: 1, Path: []string{"add"}, Args: []Expr{LiteralExpr{Value: float64(1)}, LiteralExpr{Value: float64(2)}}}, `["import",1,["add"],[1,2]]`},
+	{"pipeline_call", PipelineExpr{ImportID: 2, Path: []string{"foo"}, Args: []Expr{}}, `["pipeline",2,["foo"],[]]`},
 
 	// HTTP types.
 	{"headers", HeadersExpr{Header: http.Header{"X-A": {"1"}}}, `["headers",[["X-A","1"]]]`},
@@ -89,7 +89,7 @@ var goldenExprs = []struct {
 	{
 		"remap",
 		RemapExpr{ImportID: 1, Path: []string{}, Captures: []Expr{}, Instructions: []Expr{ImportExpr{ImportID: 0, Path: []string{"x"}, Args: []Expr{}}}},
-		`["remap",1,[],[],[["import",0,"x",[]]]]`,
+		`["remap",1,[],[],[["import",0,["x"],[]]]]`,
 	},
 }
 
@@ -181,6 +181,31 @@ func TestEmptyHeadersOmittedInInit(t *testing.T) {
 	}
 	if _, present := init["headers"]; present {
 		t.Errorf("init should omit empty headers; got %s", arr[2])
+	}
+}
+
+// TestRefPathAlwaysArray verifies a single-element property path encodes as an
+// array (the reference rejects a bare-string path), while decode still tolerates
+// the legacy bare-string form.
+func TestRefPathAlwaysArray(t *testing.T) {
+	got, err := EncodeExpr(ImportExpr{ImportID: 1, Path: []string{"m"}, Args: []Expr{}})
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if !jsonEq(t, got, []byte(`["import",1,["m"],[]]`)) {
+		t.Errorf("single-element path = %s; want array form", got)
+	}
+
+	// Decode tolerates both the array form and the legacy bare string.
+	for _, wire := range []string{`["import",1,["m"]]`, `["import",1,"m"]`} {
+		decoded, err := DecodeExpr([]byte(wire))
+		if err != nil {
+			t.Fatalf("decode %s: %v", wire, err)
+		}
+		imp, ok := decoded.(ImportExpr)
+		if !ok || len(imp.Path) != 1 || imp.Path[0] != "m" {
+			t.Errorf("decode %s = %#v; want path [m]", wire, decoded)
+		}
 	}
 }
 

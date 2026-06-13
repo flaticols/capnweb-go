@@ -761,11 +761,14 @@ func headerPairs(h http.Header) [][2]string {
 func encodeRefExpr(tag string, id int64, path []string, args []Expr) (json.RawMessage, error) {
 	elems := []any{tag, id}
 	if len(path) > 0 || args != nil {
-		if len(path) == 1 {
-			elems = append(elems, path[0])
-		} else {
-			elems = append(elems, path)
+		// The property path is always an array of names, even for a single
+		// element; the reference rejects a bare-string path. Use a non-nil
+		// slice so an empty path with args encodes as [] rather than null.
+		p := path
+		if p == nil {
+			p = []string{}
 		}
+		elems = append(elems, p)
 	}
 	if args != nil {
 		encoded, err := encodeExprSlice(args)
