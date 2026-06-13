@@ -119,6 +119,11 @@ class TestService extends RpcTarget {
   getEmptyHeaders() {
     return new Headers();
   }
+
+  // getRequest returns a Request with a body (requires init.duplex).
+  getRequest() {
+    return new Request("https://example.com/", { method: "POST", body: "hello", duplex: "half" });
+  }
 }
 
 class ChildService extends RpcTarget {
