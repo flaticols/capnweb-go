@@ -588,11 +588,54 @@ func decodeBigIntExpr(raw []json.RawMessage) (Expr, error) {
 	if err := json.Unmarshal(raw[1], &s); err != nil {
 		return nil, fmt.Errorf("capnweb: bigint: %w", err)
 	}
-	n, ok := new(big.Int).SetString(s, 10)
+	n, ok := parseJSBigInt(s)
 	if !ok {
 		return nil, fmt.Errorf("capnweb: invalid bigint %q", s)
 	}
 	return BigIntExpr{Value: n}, nil
+}
+
+// parseJSBigInt parses a decimal string the way JS BigInt() does: surrounding
+// whitespace is ignored, "" is 0, 0x/0o/0b prefixes select hex/octal/binary,
+// and a leading "0" is still decimal (unlike C/Go base-0). A sign is allowed
+// only on decimal; a sign combined with a radix prefix, or a prefix with no
+// digits, is invalid (BigInt throws).
+func parseJSBigInt(s string) (*big.Int, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return big.NewInt(0), true
+	}
+	signed := s[0] == '+' || s[0] == '-'
+	neg := s[0] == '-'
+	body := s
+	if signed {
+		body = s[1:]
+	}
+	base := 10
+	if len(body) >= 2 && body[0] == '0' {
+		switch body[1] {
+		case 'x', 'X':
+			base, body = 16, body[2:]
+		case 'o', 'O':
+			base, body = 8, body[2:]
+		case 'b', 'B':
+			base, body = 2, body[2:]
+		}
+	}
+	if base != 10 && signed {
+		return nil, false // JS rejects e.g. "-0x10"
+	}
+	if body == "" {
+		return nil, false
+	}
+	n, ok := new(big.Int).SetString(body, base)
+	if !ok {
+		return nil, false
+	}
+	if neg {
+		n.Neg(n)
+	}
+	return n, true
 }
 
 func decodeDateExpr(raw []json.RawMessage) (Expr, error) {

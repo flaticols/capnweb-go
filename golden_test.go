@@ -235,6 +235,37 @@ func TestNumericPropertyPath(t *testing.T) {
 	}
 }
 
+// TestBigIntDecodeLeniency matches JS BigInt() string parsing: prefixes,
+// empty string, whitespace, and signs are handled, with the same rejections.
+func TestBigIntDecodeLeniency(t *testing.T) {
+	ok := map[string]string{
+		`["bigint","0xff"]`:    "255",
+		`["bigint","0o17"]`:    "15",
+		`["bigint","0b101"]`:   "5",
+		`["bigint",""]`:        "0",
+		`["bigint","  10  "]`:  "10",
+		`["bigint","010"]`:     "10", // decimal, not octal
+		`["bigint","-10"]`:     "-10",
+		`["bigint","+10"]`:     "10",
+		`["bigint","123"]`:     "123",
+	}
+	for wire, want := range ok {
+		decoded, err := DecodeExpr([]byte(wire))
+		if err != nil {
+			t.Errorf("decode %s: %v", wire, err)
+			continue
+		}
+		if b := decoded.(BigIntExpr); b.Value.String() != want {
+			t.Errorf("decode %s = %s; want %s", wire, b.Value, want)
+		}
+	}
+	for _, wire := range []string{`["bigint","-0x10"]`, `["bigint","0x"]`, `["bigint","abc"]`} {
+		if _, err := DecodeExpr([]byte(wire)); err == nil {
+			t.Errorf("decode %s: expected error (JS BigInt throws)", wire)
+		}
+	}
+}
+
 func TestGoldenDateInvalidDecode(t *testing.T) {
 	decoded, err := DecodeExpr([]byte(`["date",null]`))
 	if err != nil {
