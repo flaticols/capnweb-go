@@ -32,6 +32,7 @@ const methods = {
   getHeaders: LOWER ? "getHeaders" : "GetHeaders",
   getSpecialFloats: LOWER ? "getSpecialFloats" : "GetSpecialFloats",
   getEmptyHeaders: LOWER ? "getEmptyHeaders" : "GetEmptyHeaders",
+  getRequest: LOWER ? "getRequest" : "GetRequest",
 };
 
 function send(ws, msg) {
@@ -420,6 +421,21 @@ describe("server interop", () => {
 
     const h = await stub[methods.getEmptyHeaders]();
     assert.equal([...h].length, 0);
+
+    clientWs.close();
+  });
+
+  it("getRequest yields a constructible Request (init.duplex present)", async () => {
+    // The reference Request constructor throws if a body is present without
+    // init.duplex, so a successful deserialize proves the Go server emits it.
+    const { newWebSocketRpcSession } = await import("capnweb");
+    const clientWs = new WebSocket(SERVER_URL);
+    await new Promise((resolve) => clientWs.on("open", resolve));
+    const stub = newWebSocketRpcSession(clientWs);
+
+    const req = await stub[methods.getRequest]();
+    assert.equal(req.method, "POST");
+    assert.equal(await req.text(), "hello");
 
     clientWs.close();
   });

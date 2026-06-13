@@ -125,6 +125,16 @@ func (s *testService) GetEmptyHeaders(_ context.Context) (capnweb.Expr, error) {
 	return capnweb.HeadersExpr{Header: http.Header{}}, nil
 }
 
+// GetRequest returns a Request with a body; the reference's Request constructor
+// throws unless init.duplex is present, so this exercises the duplex emission.
+func (s *testService) GetRequest(_ context.Context) (capnweb.Expr, error) {
+	return capnweb.RequestExpr{
+		URL:    "https://example.com/",
+		Method: "POST",
+		Body:   capnweb.BytesExpr{Data: []byte("hello")},
+	}, nil
+}
+
 // childService is an RpcTarget returned by reference.
 type childService struct {
 	capnweb.RpcTargetBase

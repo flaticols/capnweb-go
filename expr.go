@@ -325,6 +325,9 @@ func encodeRequestExpr(v RequestExpr) (json.RawMessage, error) {
 			return nil, fmt.Errorf("capnweb: request body: %w", err)
 		}
 		init["body"] = body
+		// A Request constructed with a body requires init.duplex; the reference
+		// always sets "half".
+		init["duplex"] = "half"
 	}
 	return json.Marshal([]any{"request", v.URL, init})
 }

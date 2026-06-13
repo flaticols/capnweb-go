@@ -148,6 +148,20 @@ func TestEncodeExprRequest(t *testing.T) {
 	if string(init["method"]) != `"POST"` {
 		t.Fatalf("method = %s", init["method"])
 	}
+	// A request with a body must carry init.duplex = "half".
+	if string(init["duplex"]) != `"half"` {
+		t.Fatalf("duplex = %s; want \"half\"", init["duplex"])
+	}
+
+	// A request without a body must NOT include duplex.
+	got2, _ := EncodeExpr(RequestExpr{URL: "https://example.com", Method: "GET"})
+	var arr2 []json.RawMessage
+	_ = json.Unmarshal(got2, &arr2)
+	var init2 map[string]json.RawMessage
+	_ = json.Unmarshal(arr2[2], &init2)
+	if _, present := init2["duplex"]; present {
+		t.Errorf("bodyless request should omit duplex; got %s", arr2[2])
+	}
 }
 
 func TestEncodeExprResponse(t *testing.T) {
