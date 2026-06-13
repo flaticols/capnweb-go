@@ -2,9 +2,9 @@
 
 Go implementation of Cloudflare's [Cap'n Web](https://github.com/cloudflare/capnweb) RPC protocol.
 
-## What is Cap'n Web?
+## What is Cap'n'Web?
 
-Cap'n Web is a JSON-based, bidirectional RPC protocol designed for the web. It enables structured communication between endpoints over WebSockets, HTTP batch requests, or any message-passing transport. The protocol supports:
+Cap'n'Web is a JSON-based, bidirectional RPC protocol designed for the web. It enables structured communication between endpoints over WebSockets, HTTP batch requests, or any message-passing transport. The protocol supports:
 
 - **Bidirectional RPC** — either side can call the other; there is no fixed "client" or "server"
 - **Promise pipelining** — chain dependent calls without waiting for intermediate results, collapsing multiple round trips into one
