@@ -61,6 +61,14 @@ var goldenExprs = []struct {
 	// Blob (0.8.0): bytes ride on a readable-stream expression.
 	{"blob", BlobExpr{Type: "text/plain", Body: ReadableExpr{ImportID: 5}}, `["blob","text/plain",["readable",5]]`},
 
+	// Arrays are escaped by wrapping in a one-element outer array.
+	{"array", ArrayExpr{Elements: []Expr{LiteralExpr{Value: "a"}, LiteralExpr{Value: float64(1)}}}, `[["a",1]]`},
+	{"array_empty", ArrayExpr{Elements: []Expr{}}, `[[]]`},
+	{"array_nested", ArrayExpr{Elements: []Expr{ArrayExpr{Elements: []Expr{LiteralExpr{Value: float64(1)}}}}}, `[[[[1]]]]`},
+	// Objects recurse into their property values (nested array gets escaped).
+	{"object_nested_array", ObjectExpr{Fields: map[string]Expr{"k": ArrayExpr{Elements: []Expr{LiteralExpr{Value: float64(1)}, LiteralExpr{Value: float64(2)}}}}}, `{"k":[[1,2]]}`},
+	{"object_nested_date", ObjectExpr{Fields: map[string]Expr{"d": DateExpr{Time: time.UnixMilli(1000)}}}, `{"d":["date",1000]}`},
+
 	// References.
 	{"export", ExportExpr{ExportID: 3}, `["export",3]`},
 	{"promise", PromiseExpr{ExportID: 7}, `["promise",7]`},
@@ -112,6 +120,42 @@ func TestGoldenExprRoundTrip(t *testing.T) {
 				t.Errorf("round-trip(%s) = %s, want %s", tc.name, reencoded, tc.wire)
 			}
 		})
+	}
+}
+
+// TestStrictDecodeRejects asserts that malformed/unescaped expressions are
+// rejected as the reference does (throw "unknown special value"), rather than
+// being silently accepted as plain arrays.
+func TestStrictDecodeRejects(t *testing.T) {
+	bad := []string{
+		`[1,2,3]`,           // bare (unescaped) array
+		`["foo",1]`,         // unknown string tag
+		`[]`,                // empty unescaped array
+		`[5]`,               // single non-array element, unknown tag
+		`["undefined","x"]`, // over-length undefined
+		`["pipe"]`,          // message tag, not a valid expression
+	}
+	for _, w := range bad {
+		t.Run(w, func(t *testing.T) {
+			if _, err := DecodeExpr([]byte(w)); err == nil {
+				t.Errorf("DecodeExpr(%s) = nil error; want rejection", w)
+			}
+		})
+	}
+}
+
+// TestEscapedArrayDecode confirms the escape rule: [[...]] -> the inner array.
+func TestEscapedArrayDecode(t *testing.T) {
+	got, err := DecodeExpr([]byte(`[[1,2,3]]`))
+	if err != nil {
+		t.Fatalf("decode escaped array: %v", err)
+	}
+	arr, ok := got.(ArrayExpr)
+	if !ok {
+		t.Fatalf("expected ArrayExpr, got %T", got)
+	}
+	if len(arr.Elements) != 3 {
+		t.Fatalf("expected 3 elements, got %d", len(arr.Elements))
 	}
 }
 

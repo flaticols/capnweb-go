@@ -103,7 +103,7 @@ func (w *StreamWriter) Abort(ctx context.Context, reason error) error {
 }
 
 func (w *StreamWriter) streamCall(ctx context.Context, method string, args ...any) error {
-	expr, err := buildCallExpr("import", w.importID, method, args)
+	expr, err := w.session.buildCallExpr("import", w.importID, method, args)
 	if err != nil {
 		return err
 	}

@@ -90,9 +90,14 @@ func TestEncodeExpr(t *testing.T) {
 		{
 			name: "array",
 			expr: ArrayExpr{Elements: []Expr{LiteralExpr{Value: "a"}, LiteralExpr{Value: 1.0}}},
-			want: `["a",1]`,
+			want: `[["a",1]]`,
 		},
-		{name: "empty array", expr: ArrayExpr{Elements: []Expr{}}, want: `[]`},
+		{name: "empty array", expr: ArrayExpr{Elements: []Expr{}}, want: `[[]]`},
+		{
+			name: "object",
+			expr: ObjectExpr{Fields: map[string]Expr{"k": ArrayExpr{Elements: []Expr{LiteralExpr{Value: 1.0}}}}},
+			want: `{"k":[[1]]}`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -222,8 +227,9 @@ func TestDecodeExpr(t *testing.T) {
 		{name: "writable", wire: `["writable",-3]`, want: WritableExpr{ExportID: -3}},
 		{name: "readable", wire: `["readable",5]`, want: ReadableExpr{ImportID: 5}},
 
-		// Empty array
-		{name: "empty array", wire: `[]`, want: ArrayExpr{}},
+		// Escaped arrays
+		{name: "empty array", wire: `[[]]`, want: ArrayExpr{}},
+		{name: "escaped array", wire: `[["a",1]]`, want: ArrayExpr{Elements: []Expr{LiteralExpr{Value: "a"}, LiteralExpr{Value: 1.0}}}},
 	}
 
 	for _, tt := range tests {

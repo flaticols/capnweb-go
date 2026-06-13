@@ -303,6 +303,23 @@ describe("server interop", () => {
     send(ws, ["release", id, 1]);
   });
 
+  it("echo round-trips nested arrays and objects (array escaping)", async () => {
+    // Use the capnweb client so array escaping / object recursion is handled
+    // by the reference implementation; this validates the Go server's codec.
+    const { newWebSocketRpcSession } = await import("capnweb");
+    const clientWs = new WebSocket(SERVER_URL);
+    await new Promise((resolve) => clientWs.on("open", resolve));
+    const stub = newWebSocketRpcSession(clientWs);
+
+    const arr = [1, "two", [3, 4]];
+    assert.deepEqual(await stub[methods.echo](arr), arr);
+
+    const obj = { nums: [1, 2], label: "x", nested: { deep: [5] } };
+    assert.deepEqual(await stub[methods.echo](obj), obj);
+
+    clientWs.close();
+  });
+
   it("unknown method returns reject", async () => {
     const id = nextId++;
     send(ws, ["push", ["import", 0, [methods.doesNotExist], []]]);
