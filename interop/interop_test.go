@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -412,6 +413,32 @@ func runGoClient(t *testing.T, serverURL string) {
 		}
 		if !result.IsZero() {
 			t.Errorf("invalid date decoded to %v; want zero time", result)
+		}
+	})
+
+	t.Run("echoArray", func(t *testing.T) {
+		// Array escaping ([[...]]) + arg devaluation, both directions:
+		// the arg is encoded by Go and the result decoded by Go.
+		in := []any{1.0, "two", []any{3.0, 4.0}}
+		result, err := capnweb.Call[[]any](ctx, main, "echo", in)
+		if err != nil {
+			t.Fatalf("echo array: %v", err)
+		}
+		if !reflect.DeepEqual(result, in) {
+			t.Fatalf("echo array = %#v; want %#v", result, in)
+		}
+	})
+
+	t.Run("echoNestedObject", func(t *testing.T) {
+		// Object property values must be recursively (de)valued — a nested
+		// array inside an object exercises both rules at once.
+		in := map[string]any{"nums": []any{1.0, 2.0}, "label": "x"}
+		result, err := capnweb.Call[map[string]any](ctx, main, "echo", in)
+		if err != nil {
+			t.Fatalf("echo object: %v", err)
+		}
+		if !reflect.DeepEqual(result, in) {
+			t.Fatalf("echo object = %#v; want %#v", result, in)
 		}
 	})
 

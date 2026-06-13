@@ -196,12 +196,19 @@ func (RemapExpr) expr() {}
 
 // --- Array wrapper ---
 
-// ArrayExpr wraps a plain array of expressions. On the wire actual arrays are
-// encoded as [elem0, elem1, ...] — the encoder handles distinguishing them
-// from typed expression arrays.
+// ArrayExpr wraps a plain array of expressions. On the wire a literal array is
+// "escaped" by wrapping it in a one-element outer array: [e0, e1, ...] is
+// encoded as [[e0, e1, ...]], distinguishing it from a tagged expression.
 type ArrayExpr struct{ Elements []Expr }
 
 func (ArrayExpr) expr() {}
+
+// ObjectExpr is a JSON object whose property values are themselves expressions
+// — encoded/decoded as {"k": <expr>, ...}. Each value is recursively evaluated,
+// so objects may carry nested arrays, dates, stubs, and other typed values.
+type ObjectExpr struct{ Fields map[string]Expr }
+
+func (ObjectExpr) expr() {}
 
 // EncodeExpr serializes an Expr to its JSON wire representation.
 func EncodeExpr(e Expr) (json.RawMessage, error) {
@@ -252,6 +259,8 @@ func EncodeExpr(e Expr) (json.RawMessage, error) {
 		return encodeRemapExpr(&v)
 	case ArrayExpr:
 		return encodeArrayExpr(v)
+	case ObjectExpr:
+		return encodeObjectExpr(v)
 	default:
 		return nil, fmt.Errorf("capnweb: unknown expression type %T", e)
 	}
@@ -359,7 +368,25 @@ func encodeArrayExpr(v ArrayExpr) (json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}
-	return json.Marshal(encoded)
+	if encoded == nil {
+		encoded = []json.RawMessage{}
+	}
+	// Escape literal arrays by wrapping in a one-element outer array: a plain
+	// array [e0,e1,...] goes on the wire as [[e0,e1,...]] so it can't be
+	// confused with a tagged expression.
+	return json.Marshal([]any{encoded})
+}
+
+func encodeObjectExpr(v ObjectExpr) (json.RawMessage, error) {
+	out := make(map[string]json.RawMessage, len(v.Fields))
+	for k, e := range v.Fields {
+		b, err := EncodeExpr(e)
+		if err != nil {
+			return nil, fmt.Errorf("capnweb: object field %q: %w", k, err)
+		}
+		out[k] = b
+	}
+	return json.Marshal(out)
 }
 
 // DecodeExpr deserializes a JSON wire value into an Expr.
@@ -370,7 +397,12 @@ func DecodeExpr(data json.RawMessage) (Expr, error) {
 		return nil, fmt.Errorf("capnweb: empty expression")
 	}
 
-	// Non-array values are literals.
+	// Objects: property values are themselves expressions — decode recursively.
+	if trimmed[0] == '{' {
+		return decodeObjectExpr(data)
+	}
+
+	// Non-array, non-object values are plain literals.
 	if trimmed[0] != '[' {
 		var v any
 		if err := json.Unmarshal(data, &v); err != nil {
@@ -383,17 +415,53 @@ func DecodeExpr(data json.RawMessage) (Expr, error) {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("capnweb: invalid array: %w", err)
 	}
-	if len(raw) == 0 {
-		return ArrayExpr{}, nil
+
+	// An array is an "escaped" literal array iff it has exactly one element
+	// and that element is itself an array: [[...]] decodes to the inner array.
+	if len(raw) == 1 && isJSONArray(raw[0]) {
+		var inner []json.RawMessage
+		if err := json.Unmarshal(raw[0], &inner); err != nil {
+			return nil, fmt.Errorf("capnweb: invalid escaped array: %w", err)
+		}
+		return decodeArrayElements(inner)
 	}
 
-	// If first element isn't a string, it's a plain array.
+	// Otherwise the first element must be a recognized string type tag. A bare
+	// or unknown-tagged array is not a valid expression (matches the reference,
+	// which throws "unknown special value").
+	if len(raw) == 0 {
+		return nil, unknownSpecialValue(data)
+	}
 	var tag string
 	if err := json.Unmarshal(raw[0], &tag); err != nil {
-		return decodeArrayElements(raw)
+		return nil, unknownSpecialValue(data)
 	}
-
 	return decodeTaggedExpr(tag, raw)
+}
+
+func isJSONArray(data json.RawMessage) bool {
+	t := bytes.TrimLeft(data, " \t\n\r")
+	return len(t) > 0 && t[0] == '['
+}
+
+func unknownSpecialValue(data json.RawMessage) error {
+	return fmt.Errorf("capnweb: unknown special value: %s", bytes.TrimSpace(data))
+}
+
+func decodeObjectExpr(data json.RawMessage) (Expr, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("capnweb: invalid object: %w", err)
+	}
+	fields := make(map[string]Expr, len(raw))
+	for k, v := range raw {
+		e, err := DecodeExpr(v)
+		if err != nil {
+			return nil, fmt.Errorf("capnweb: object field %q: %w", k, err)
+		}
+		fields[k] = e
+	}
+	return ObjectExpr{Fields: fields}, nil
 }
 
 // --- decode dispatch ---
@@ -401,6 +469,9 @@ func DecodeExpr(data json.RawMessage) (Expr, error) {
 func decodeTaggedExpr(tag string, raw []json.RawMessage) (Expr, error) {
 	switch tag {
 	case "undefined":
+		if len(raw) != 1 {
+			return nil, fmt.Errorf("capnweb: unknown special value: %s", joinRaw(raw))
+		}
 		return UndefinedExpr{}, nil
 	case "inf":
 		return InfExpr{}, nil
@@ -439,8 +510,19 @@ func decodeTaggedExpr(tag string, raw []json.RawMessage) (Expr, error) {
 	case "remap":
 		return decodeRemapExpr(raw)
 	default:
-		return decodeArrayElements(raw)
+		// An array whose first element is an unrecognized string tag is not a
+		// valid expression (the reference throws "unknown special value").
+		return nil, fmt.Errorf("capnweb: unknown special value: %s", joinRaw(raw))
 	}
+}
+
+// joinRaw renders a decoded array back to a compact JSON-ish string for errors.
+func joinRaw(raw []json.RawMessage) string {
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return "[?]"
+	}
+	return string(b)
 }
 
 func decodeIDExpr(raw []json.RawMessage, tag string, make_ func(int64) Expr) (Expr, error) {

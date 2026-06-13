@@ -47,8 +47,8 @@ func NewSession(transport Transport, main any) *Session {
 		transport: transport,
 		imports:   NewImportTable(),
 		exports:   NewExportTable(main),
-		pending: make(map[int64]*pendingCall),
-		done:    make(chan struct{}),
+		pending:   make(map[int64]*pendingCall),
+		done:      make(chan struct{}),
 		ctx:       ctx,
 		cancel:    cancel,
 	}
@@ -114,7 +114,7 @@ func (s *Session) Call(ctx context.Context, targetID int64, method string, args 
 }
 
 func (s *Session) callWithTag(ctx context.Context, tag string, targetID int64, method string, args ...any) (any, error) {
-	expr, err := buildCallExpr(tag, targetID, method, args)
+	expr, err := s.buildCallExpr(tag, targetID, method, args)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +155,7 @@ func (s *Session) callWithTag(ctx context.Context, tag string, targetID int64, m
 // push sends a push message without pull. Returns the allocated import ID.
 // Used for promise pipelining where the result is consumed by a subsequent call.
 func (s *Session) push(ctx context.Context, tag string, targetID int64, method string, args []any) (int64, error) {
-	expr, err := buildCallExpr(tag, targetID, method, args)
+	expr, err := s.buildCallExpr(tag, targetID, method, args)
 	if err != nil {
 		return 0, err
 	}
@@ -496,26 +496,38 @@ func (s *Session) valueToExpr(val any) (Expr, error) {
 		entry := s.exports.Export(val)
 		return ExportExpr{ExportID: entry.ID}, nil
 	}
+	// []byte is a scalar (base64), not a slice to recurse into.
+	if _, ok := val.([]byte); ok {
+		return LiteralExpr{Value: val}, nil
+	}
 	rv := reflect.ValueOf(val)
-	if rv.Kind() == reflect.Slice {
-		hasRef := false
+	switch rv.Kind() {
+	case reflect.Slice, reflect.Array:
+		// Every literal array is recursively devalued and escaped as [[...]].
+		elems := make([]Expr, rv.Len())
 		for i := range rv.Len() {
-			if _, ok := rv.Index(i).Interface().(RpcTarget); ok {
-				hasRef = true
-				break
+			e, err := s.valueToExpr(rv.Index(i).Interface())
+			if err != nil {
+				return nil, err
 			}
+			elems[i] = e
 		}
-		if hasRef {
-			elems := make([]Expr, rv.Len())
-			for i := range rv.Len() {
-				e, err := s.valueToExpr(rv.Index(i).Interface())
-				if err != nil {
-					return nil, err
-				}
-				elems[i] = e
+		return ArrayExpr{Elements: elems}, nil
+	case reflect.Map:
+		// Object property values are themselves expressions.
+		if rv.Type().Key().Kind() != reflect.String {
+			break // non-string keys can't form a JSON object; fall through
+		}
+		fields := make(map[string]Expr, rv.Len())
+		iter := rv.MapRange()
+		for iter.Next() {
+			e, err := s.valueToExpr(iter.Value().Interface())
+			if err != nil {
+				return nil, err
 			}
-			return ArrayExpr{Elements: elems}, nil
+			fields[iter.Key().String()] = e
 		}
+		return ObjectExpr{Fields: fields}, nil
 	}
 	return LiteralExpr{Value: val}, nil
 }
@@ -602,14 +614,28 @@ func (s *Session) exprToValue(e Expr) any {
 	case WritableExpr:
 		return &StreamWriter{session: s, importID: v.ExportID}
 	case ArrayExpr:
-		out := make([]any, len(v.Elements))
-		for i, el := range v.Elements {
-			out[i] = s.exprToValue(el)
-		}
-		return out
+		return s.arrayToValue(v)
+	case ObjectExpr:
+		return s.objectToValue(v)
 	default:
 		return nil
 	}
+}
+
+func (s *Session) arrayToValue(v ArrayExpr) []any {
+	out := make([]any, len(v.Elements))
+	for i, el := range v.Elements {
+		out[i] = s.exprToValue(el)
+	}
+	return out
+}
+
+func (s *Session) objectToValue(v ObjectExpr) map[string]any {
+	out := make(map[string]any, len(v.Fields))
+	for k, el := range v.Fields {
+		out[k] = s.exprToValue(el)
+	}
+	return out
 }
 
 func (s *Session) terminateAll(err error) {
@@ -799,9 +825,9 @@ type deferredResult struct {
 	future *Future
 }
 
-func buildCallExpr(tag string, targetID int64, method string, args []any) (json.RawMessage, error) {
+func (s *Session) buildCallExpr(tag string, targetID int64, method string, args []any) (json.RawMessage, error) {
 	if method != "" {
-		encodedArgs, err := encodeArgs(args)
+		encodedArgs, err := s.encodeArgs(args)
 		if err != nil {
 			return nil, err
 		}
@@ -810,27 +836,24 @@ func buildCallExpr(tag string, targetID int64, method string, args []any) (json.
 	return json.Marshal([]any{tag, targetID})
 }
 
-// encodeArgs encodes call arguments. Expr values are encoded via EncodeExpr;
-// plain values are encoded via json.Marshal.
-func encodeArgs(args []any) ([]json.RawMessage, error) {
+// encodeArgs encodes call arguments. Each argument is devalued through
+// valueToExpr (so arrays are escaped, objects recurse, and typed values like
+// bytes/dates/stubs are encoded as expressions) and then serialized.
+func (s *Session) encodeArgs(args []any) ([]json.RawMessage, error) {
 	if len(args) == 0 {
 		return []json.RawMessage{}, nil
 	}
 	out := make([]json.RawMessage, len(args))
 	for i, arg := range args {
-		if expr, ok := arg.(Expr); ok {
-			encoded, err := EncodeExpr(expr)
-			if err != nil {
-				return nil, err
-			}
-			out[i] = encoded
-		} else {
-			encoded, err := json.Marshal(arg)
-			if err != nil {
-				return nil, err
-			}
-			out[i] = encoded
+		expr, err := s.valueToExpr(arg)
+		if err != nil {
+			return nil, err
 		}
+		encoded, err := EncodeExpr(expr)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = encoded
 	}
 	return out, nil
 }
