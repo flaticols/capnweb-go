@@ -146,7 +146,7 @@ func (ResponseExpr) expr() {}
 // Evaluates to a stub.
 type ImportExpr struct {
 	ImportID int64
-	Path     []string
+	Path     []any  // property names (string) or array indices (number)
 	Args     []Expr // nil = no call; empty = call with zero args
 }
 
@@ -156,7 +156,7 @@ func (ImportExpr) expr() {}
 // ["pipeline", id, path?, args?].
 type PipelineExpr struct {
 	ImportID int64
-	Path     []string
+	Path     []any
 	Args     []Expr
 }
 
@@ -189,7 +189,7 @@ func (ReadableExpr) expr() {}
 // RemapExpr represents a server-side .map() — ["remap", importId, path, captures, instructions].
 type RemapExpr struct {
 	ImportID     int64
-	Path         []string
+	Path         []any
 	Captures     []Expr
 	Instructions []Expr
 }
@@ -727,8 +727,8 @@ func decodeRemapExpr(raw []json.RawMessage) (Expr, error) {
 	if err := decodeInt64(raw[1], &id); err != nil {
 		return nil, fmt.Errorf("capnweb: remap id: %w", err)
 	}
-	var path []string
-	if err := json.Unmarshal(raw[2], &path); err != nil {
+	path, err := decodePathElems(raw[2])
+	if err != nil {
 		return nil, fmt.Errorf("capnweb: remap path: %w", err)
 	}
 	caps, err := decodeExprSlice(raw[3])
@@ -758,15 +758,16 @@ func headerPairs(h http.Header) [][2]string {
 	return pairs
 }
 
-func encodeRefExpr(tag string, id int64, path []string, args []Expr) (json.RawMessage, error) {
+func encodeRefExpr(tag string, id int64, path []any, args []Expr) (json.RawMessage, error) {
 	elems := []any{tag, id}
 	if len(path) > 0 || args != nil {
-		// The property path is always an array of names, even for a single
-		// element; the reference rejects a bare-string path. Use a non-nil
-		// slice so an empty path with args encodes as [] rather than null.
+		// The property path is always an array of names (strings) or indices
+		// (numbers), even for a single element; the reference rejects a
+		// bare-string path. Use a non-nil slice so an empty path with args
+		// encodes as [] rather than null.
 		p := path
 		if p == nil {
-			p = []string{}
+			p = []any{}
 		}
 		elems = append(elems, p)
 	}
@@ -835,18 +836,31 @@ func decodeExprSlice(data json.RawMessage) ([]Expr, error) {
 	return out, nil
 }
 
-func decodeRefPath(raw []json.RawMessage) ([]string, error) {
+func decodeRefPath(raw []json.RawMessage) ([]any, error) {
 	if len(raw) < 3 {
 		return nil, nil
 	}
-	// Path can be a single string or array of strings.
+	// Tolerate the legacy bare-string path form.
 	var s string
 	if err := json.Unmarshal(raw[2], &s); err == nil {
-		return []string{s}, nil
+		return []any{s}, nil
 	}
-	var path []string
-	if err := json.Unmarshal(raw[2], &path); err != nil {
+	return decodePathElems(raw[2])
+}
+
+// decodePathElems decodes a property path: an array whose elements are strings
+// (property names) or numbers (array indices), per the spec's PropertyPath.
+func decodePathElems(data json.RawMessage) ([]any, error) {
+	var path []any
+	if err := json.Unmarshal(data, &path); err != nil {
 		return nil, fmt.Errorf("capnweb: ref path: %w", err)
+	}
+	for i, p := range path {
+		switch p.(type) {
+		case string, float64:
+		default:
+			return nil, fmt.Errorf("capnweb: ref path[%d]: expected string or number, got %T", i, p)
+		}
 	}
 	return path, nil
 }
@@ -874,7 +888,7 @@ func decodeRefAsPipeline(raw []json.RawMessage) (Expr, error) {
 	return PipelineExpr{ImportID: id, Path: path, Args: args}, nil
 }
 
-func decodeRefFields(tag string, raw []json.RawMessage) (id int64, path []string, args []Expr, err error) {
+func decodeRefFields(tag string, raw []json.RawMessage) (id int64, path []any, args []Expr, err error) {
 	if len(raw) < 2 {
 		err = fmt.Errorf("capnweb: %s: missing id", tag)
 		return

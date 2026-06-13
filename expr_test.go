@@ -51,22 +51,22 @@ func TestEncodeExpr(t *testing.T) {
 		{name: "import id only", expr: ImportExpr{ImportID: 0}, want: `["import",0]`},
 		{
 			name: "import with method",
-			expr: ImportExpr{ImportID: 0, Path: []string{"greet"}, Args: []Expr{LiteralExpr{Value: "hi"}}},
+			expr: ImportExpr{ImportID: 0, Path: []any{"greet"}, Args: []Expr{LiteralExpr{Value: "hi"}}},
 			want: `["import",0,["greet"],["hi"]]`,
 		},
 		{
 			name: "import with path no args",
-			expr: ImportExpr{ImportID: 1, Path: []string{"name"}},
+			expr: ImportExpr{ImportID: 1, Path: []any{"name"}},
 			want: `["import",1,["name"]]`,
 		},
 		{
 			name: "import call zero args",
-			expr: ImportExpr{ImportID: 0, Path: []string{"ping"}, Args: []Expr{}},
+			expr: ImportExpr{ImportID: 0, Path: []any{"ping"}, Args: []Expr{}},
 			want: `["import",0,["ping"],[]]`,
 		},
 		{
 			name: "pipeline",
-			expr: PipelineExpr{ImportID: 1, Path: []string{"getData"}, Args: []Expr{}},
+			expr: PipelineExpr{ImportID: 1, Path: []any{"getData"}, Args: []Expr{}},
 			want: `["pipeline",1,["getData"],[]]`,
 		},
 
@@ -79,9 +79,9 @@ func TestEncodeExpr(t *testing.T) {
 			name: "remap",
 			expr: RemapExpr{
 				ImportID:     5,
-				Path:         []string{},
+				Path:         []any{},
 				Captures:     []Expr{ImportExpr{ImportID: -3}},
-				Instructions: []Expr{ImportExpr{ImportID: 0, Path: []string{"name"}}},
+				Instructions: []Expr{ImportExpr{ImportID: 0, Path: []any{"name"}}},
 			},
 			want: `["remap",5,[],[["import",-3]],[["import",0,["name"]]]]`,
 		},
@@ -222,8 +222,8 @@ func TestDecodeExpr(t *testing.T) {
 		{name: "export", wire: `["export",-1]`, want: ExportExpr{ExportID: -1}},
 		{name: "promise", wire: `["promise",-2]`, want: PromiseExpr{ExportID: -2}},
 		{name: "import id only", wire: `["import",5]`, want: ImportExpr{ImportID: 5}},
-		{name: "import+method+args", wire: `["import",0,["greet"],["hi"]]`, want: ImportExpr{ImportID: 0, Path: []string{"greet"}, Args: []Expr{LiteralExpr{Value: "hi"}}}},
-		{name: "pipeline", wire: `["pipeline",1,["getData"],[]]`, want: PipelineExpr{ImportID: 1, Path: []string{"getData"}, Args: []Expr{}}},
+		{name: "import+method+args", wire: `["import",0,["greet"],["hi"]]`, want: ImportExpr{ImportID: 0, Path: []any{"greet"}, Args: []Expr{LiteralExpr{Value: "hi"}}}},
+		{name: "pipeline", wire: `["pipeline",1,["getData"],[]]`, want: PipelineExpr{ImportID: 1, Path: []any{"getData"}, Args: []Expr{}}},
 
 		// Streams
 		{name: "writable", wire: `["writable",-3]`, want: WritableExpr{ExportID: -3}},
@@ -268,8 +268,8 @@ func TestDecodeExprRoundTrip(t *testing.T) {
 		{"date", DateExpr{Time: time.UnixMilli(1700000000000)}},
 		{"error", ErrorExpr{Type: "RangeError", Message: "out of bounds"}},
 		{"export", ExportExpr{ExportID: -5}},
-		{"import+call", ImportExpr{ImportID: 0, Path: []string{"foo"}, Args: []Expr{LiteralExpr{Value: 42.0}}}},
-		{"pipeline", PipelineExpr{ImportID: 1, Path: []string{"bar"}, Args: []Expr{}}},
+		{"import+call", ImportExpr{ImportID: 0, Path: []any{"foo"}, Args: []Expr{LiteralExpr{Value: 42.0}}}},
+		{"pipeline", PipelineExpr{ImportID: 1, Path: []any{"bar"}, Args: []Expr{}}},
 		{"writable", WritableExpr{ExportID: -1}},
 		{"readable", ReadableExpr{ImportID: 3}},
 		{"array", ArrayExpr{Elements: []Expr{LiteralExpr{Value: "a"}, LiteralExpr{Value: 1.0}}}},

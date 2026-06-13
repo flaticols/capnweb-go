@@ -75,8 +75,8 @@ var goldenExprs = []struct {
 	{"writable", WritableExpr{ExportID: 2}, `["writable",2]`},
 	{"readable", ReadableExpr{ImportID: 4}, `["readable",4]`},
 	{"import_bare", ImportExpr{ImportID: 1}, `["import",1]`},
-	{"import_call", ImportExpr{ImportID: 1, Path: []string{"add"}, Args: []Expr{LiteralExpr{Value: float64(1)}, LiteralExpr{Value: float64(2)}}}, `["import",1,["add"],[1,2]]`},
-	{"pipeline_call", PipelineExpr{ImportID: 2, Path: []string{"foo"}, Args: []Expr{}}, `["pipeline",2,["foo"],[]]`},
+	{"import_call", ImportExpr{ImportID: 1, Path: []any{"add"}, Args: []Expr{LiteralExpr{Value: float64(1)}, LiteralExpr{Value: float64(2)}}}, `["import",1,["add"],[1,2]]`},
+	{"pipeline_call", PipelineExpr{ImportID: 2, Path: []any{"foo"}, Args: []Expr{}}, `["pipeline",2,["foo"],[]]`},
 
 	// HTTP types.
 	{"headers", HeadersExpr{Header: http.Header{"X-A": {"1"}}}, `["headers",[["X-A","1"]]]`},
@@ -88,7 +88,7 @@ var goldenExprs = []struct {
 	// Remap.
 	{
 		"remap",
-		RemapExpr{ImportID: 1, Path: []string{}, Captures: []Expr{}, Instructions: []Expr{ImportExpr{ImportID: 0, Path: []string{"x"}, Args: []Expr{}}}},
+		RemapExpr{ImportID: 1, Path: []any{}, Captures: []Expr{}, Instructions: []Expr{ImportExpr{ImportID: 0, Path: []any{"x"}, Args: []Expr{}}}},
 		`["remap",1,[],[],[["import",0,["x"],[]]]]`,
 	},
 }
@@ -188,7 +188,7 @@ func TestEmptyHeadersOmittedInInit(t *testing.T) {
 // array (the reference rejects a bare-string path), while decode still tolerates
 // the legacy bare-string form.
 func TestRefPathAlwaysArray(t *testing.T) {
-	got, err := EncodeExpr(ImportExpr{ImportID: 1, Path: []string{"m"}, Args: []Expr{}})
+	got, err := EncodeExpr(ImportExpr{ImportID: 1, Path: []any{"m"}, Args: []Expr{}})
 	if err != nil {
 		t.Fatalf("encode: %v", err)
 	}
@@ -206,6 +206,30 @@ func TestRefPathAlwaysArray(t *testing.T) {
 		if !ok || len(imp.Path) != 1 || imp.Path[0] != "m" {
 			t.Errorf("decode %s = %#v; want path [m]", wire, decoded)
 		}
+	}
+}
+
+// TestNumericPropertyPath verifies a property path may carry numeric indices
+// (PropertyPath = (string|number)[]) without the decoder rejecting them.
+func TestNumericPropertyPath(t *testing.T) {
+	decoded, err := DecodeExpr([]byte(`["pipeline",0,[0,"name"]]`))
+	if err != nil {
+		t.Fatalf("decode numeric path: %v", err)
+	}
+	p, ok := decoded.(PipelineExpr)
+	if !ok {
+		t.Fatalf("expected PipelineExpr, got %T", decoded)
+	}
+	if len(p.Path) != 2 || p.Path[0] != float64(0) || p.Path[1] != "name" {
+		t.Errorf("path = %#v; want [0 name]", p.Path)
+	}
+	// accessPath indexes into arrays by number (float64 from JSON) and by a
+	// numeric string (JS property keys are strings), and into objects by name.
+	if got := accessPath([]any{map[string]any{"name": "x"}}, []any{float64(0), "name"}); got != "x" {
+		t.Errorf("accessPath numeric = %v; want x", got)
+	}
+	if got := accessPath([]any{float64(10), float64(20)}, []any{"1"}); got != float64(20) {
+		t.Errorf("accessPath string-index = %v; want 20", got)
 	}
 }
 
