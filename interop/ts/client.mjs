@@ -21,6 +21,9 @@ const methods = {
   childMethod: LOWER ? "childMethod" : "ChildMethod",
   failTyped: LOWER ? "failTyped" : "FailTyped",
   collect: LOWER ? "collect" : "Collect",
+  makeBlob: LOWER ? "makeBlob" : "MakeBlob",
+  failWithProps: LOWER ? "failWithProps" : "FailWithProps",
+  getInvalidDate: LOWER ? "getInvalidDate" : "GetInvalidDate",
 };
 
 function send(ws, msg) {
@@ -250,6 +253,54 @@ describe("server interop", () => {
     assert.equal(result, "Hello, World!");
 
     clientWs.close();
+  });
+
+  it("makeBlob returns a blob with preserved type and bytes", async () => {
+    // Use the capnweb client so the blob's readable pipe is handled for us.
+    const { newWebSocketRpcSession } = await import("capnweb");
+    const clientWs = new WebSocket(SERVER_URL);
+    await new Promise((resolve) => clientWs.on("open", resolve));
+
+    const stub = newWebSocketRpcSession(clientWs);
+    const blob = await stub[methods.makeBlob]();
+    assert.equal(blob.type, "text/plain");
+    assert.equal(await blob.text(), "blob payload");
+
+    clientWs.close();
+  });
+
+  it("failWithProps preserves error properties over the wire", async () => {
+    const id = nextId++;
+    send(ws, ["push", ["import", 0, [methods.failWithProps], []]]);
+    send(ws, ["pull", id]);
+
+    const msg = await recv(ws);
+    assert.equal(msg[0], "reject");
+    assert.equal(msg[1], id);
+    const err = msg[2];
+    assert.equal(err[0], "error");
+    // 0.8.0 form: ["error", name, message, stack-or-null, props].
+    assert.ok(err.length >= 5, `expected 5-element error, got ${JSON.stringify(err)}`);
+    const props = err[4];
+    assert.equal(props.code, 42);
+    assert.equal(props.detail, "extra");
+    // cause is itself a devalued error expression.
+    assert.ok(Array.isArray(props.cause) && props.cause[0] === "error");
+
+    send(ws, ["release", id, 1]);
+  });
+
+  it("getInvalidDate serializes as [\"date\", null]", async () => {
+    const id = nextId++;
+    send(ws, ["push", ["import", 0, [methods.getInvalidDate], []]]);
+    send(ws, ["pull", id]);
+
+    const msg = await recv(ws);
+    assert.equal(msg[0], "resolve");
+    assert.equal(msg[1], id);
+    assert.deepEqual(msg[2], ["date", null]);
+
+    send(ws, ["release", id, 1]);
   });
 
   it("unknown method returns reject", async () => {

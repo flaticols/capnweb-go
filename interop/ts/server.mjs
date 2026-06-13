@@ -50,6 +50,33 @@ class TestService extends RpcTarget {
     }
     return result;
   }
+
+  // --- 0.8.0 features ---
+
+  // makeBlob returns a Blob with a MIME type; exercises blob streaming.
+  makeBlob() {
+    return new Blob(["blob payload"], { type: "text/plain" });
+  }
+
+  // echoBlob reads a blob argument and returns its text (for symmetry).
+  async echoBlob(blob) {
+    return await blob.text();
+  }
+
+  // failWithProps throws an Error carrying custom enumerable properties plus a
+  // cause; exercises ["error", name, msg, stack?, props].
+  failWithProps() {
+    const err = new Error("with props");
+    err.code = 42;
+    err.detail = "extra";
+    err.cause = new RangeError("the cause");
+    throw err;
+  }
+
+  // getInvalidDate returns an invalid Date; exercises ["date", null].
+  getInvalidDate() {
+    return new Date(NaN);
+  }
 }
 
 class ChildService extends RpcTarget {

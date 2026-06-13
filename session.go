@@ -8,6 +8,7 @@ import (
 	"math"
 	"reflect"
 	"sync"
+	"time"
 )
 
 // Session manages a single capnweb RPC connection. It is fully bidirectional —
@@ -479,6 +480,18 @@ func (s *Session) valueToExpr(val any) (Expr, error) {
 	if val == nil {
 		return LiteralExpr{Value: nil}, nil
 	}
+	switch b := val.(type) {
+	case Expr:
+		// Already an expression (e.g. a method returned a DateExpr/BytesExpr) —
+		// pass it through rather than double-wrapping it in a LiteralExpr.
+		return b, nil
+	case *Blob:
+		return s.blobToExpr(b)
+	case Blob:
+		return s.blobToExpr(&b)
+	case time.Time:
+		return DateExpr{Time: b}, nil
+	}
 	if _, ok := val.(RpcTarget); ok {
 		entry := s.exports.Export(val)
 		return ExportExpr{ExportID: entry.ID}, nil
@@ -507,6 +520,56 @@ func (s *Session) valueToExpr(val any) (Expr, error) {
 	return LiteralExpr{Value: val}, nil
 }
 
+// blobToExpr streams a Blob's bytes through a new pipe and returns the
+// ["blob", type, ["readable", id]] expression referencing it. Mirrors the JS
+// reference: even small blobs are streamed because the readable is the only
+// way to carry the bytes within the synchronously-serialized message.
+func (s *Session) blobToExpr(b *Blob) (Expr, error) {
+	// Blobs stream their bytes through a pipe, which needs the live ack
+	// back-channel of a streaming transport. Over a one-shot batch transport
+	// the write would block forever, so fail fast with a clear error instead.
+	if _, ok := s.transport.(interface{ nonStreaming() }); ok {
+		return nil, fmt.Errorf("capnweb: Blob requires a streaming transport (e.g. WebSocket), not HTTP batch")
+	}
+	ctx := s.getCtx()
+	writer, readable, err := s.CreatePipe(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("capnweb: blob pipe: %w", err)
+	}
+	data := b.data
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		if len(data) > 0 {
+			_ = writer.Write(ctx, BytesExpr{Data: data})
+		}
+		_ = writer.Close(ctx)
+	}()
+	return BlobExpr{Type: b.Type, Body: readable}, nil
+}
+
+// blobFromExpr builds a lazily-read Blob from a BlobExpr, backed by the
+// readable end of the pipe carrying its bytes.
+func (s *Session) blobFromExpr(v BlobExpr) *Blob {
+	blob := &Blob{Type: v.Type}
+	if r, ok := s.exprToValue(v.Body).(*StreamReader); ok {
+		blob.reader = r
+	}
+	return blob
+}
+
+// readerFromExpr resolves a ReadableExpr to the StreamReader for its pipe.
+func (s *Session) readerFromExpr(v ReadableExpr) any {
+	entry := s.exports.Get(v.ImportID)
+	if entry == nil {
+		return nil
+	}
+	if p, ok := entry.Target.(*pipe); ok {
+		return &StreamReader{pipe: p}
+	}
+	return nil
+}
+
 func (s *Session) exprToValue(e Expr) any {
 	switch v := e.(type) {
 	case LiteralExpr:
@@ -521,6 +584,8 @@ func (s *Session) exprToValue(e Expr) any {
 		return math.NaN()
 	case BytesExpr:
 		return v.Data
+	case BlobExpr:
+		return s.blobFromExpr(v)
 	case BigIntExpr:
 		return v.Value
 	case DateExpr:
@@ -533,14 +598,7 @@ func (s *Session) exprToValue(e Expr) any {
 		entry := s.imports.Insert(v.ExportID)
 		return entry
 	case ReadableExpr:
-		entry := s.exports.Get(v.ImportID)
-		if entry == nil {
-			return nil
-		}
-		if p, ok := entry.Target.(*pipe); ok {
-			return &StreamReader{pipe: p}
-		}
-		return nil
+		return s.readerFromExpr(v)
 	case WritableExpr:
 		return &StreamWriter{session: s, importID: v.ExportID}
 	case ArrayExpr:

@@ -1,0 +1,37 @@
+name: Nightly interop drift
+
+# Drift alarm: runs the cross-language (Go ↔ TypeScript) interop suite against
+# the LATEST cloudflare/capnweb instead of the pinned version used by PR CI.
+# A red nightly means upstream moved — go align the Go implementation.
+on:
+  schedule:
+    - cron: "0 3 * * *" # 03:00 UTC nightly
+  workflow_dispatch: {}
+
+jobs:
+  interop-latest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: cloudflare/capnweb
+          # Float to the latest upstream (default branch) — the whole point of
+          # this job is to catch wire-protocol drift before it reaches a release.
+          path: capnweb-ref
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install interop deps at latest capnweb
+        run: |
+          cd interop/ts
+          npm install
+          npm install capnweb@latest
+      - name: Run interop tests against latest capnweb
+        env:
+          CAPNWEB_INTEROP: "1"
+          CAPNWEB_PATH: ${{ github.workspace }}/capnweb-ref
+        run: cd interop && go test -v -race -timeout 120s ./...

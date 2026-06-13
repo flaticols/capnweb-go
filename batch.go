@@ -155,3 +155,7 @@ func (t *collectorTransport) Recv(_ context.Context) (Message, error) {
 func (t *collectorTransport) Close() error {
 	return nil
 }
+
+// nonStreaming marks this as a one-shot transport with no live back-channel,
+// so streams/blobs (which need ack round-trips) cannot work over it.
+func (t *collectorTransport) nonStreaming() {}

@@ -38,6 +38,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: cloudflare/capnweb
+          # Pinned to the version interop/ts depends on, so PR CI is
+          # deterministic. The nightly workflow floats to latest to detect
+          # upstream protocol drift.
+          ref: v0.8.0
           path: capnweb-ref
       - uses: actions/setup-go@v5
         with:
