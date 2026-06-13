@@ -8,6 +8,7 @@ import (
 	"math"
 	"math/big"
 	"reflect"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -416,7 +417,7 @@ func (s *Session) evaluateAndCall(raw json.RawMessage) (any, error) {
 	}
 }
 
-func (s *Session) dispatchCall(exportID int64, path []string, args []Expr) (any, error) {
+func (s *Session) dispatchCall(exportID int64, path []any, args []Expr) (any, error) {
 	entry := s.exports.Get(exportID)
 	if entry == nil {
 		return nil, fmt.Errorf("capnweb: unknown export ID %d", exportID)
@@ -435,7 +436,10 @@ func (s *Session) dispatchCall(exportID int64, path []string, args []Expr) (any,
 		return target, nil
 	}
 
-	methodName := path[len(path)-1]
+	methodName, ok := path[len(path)-1].(string)
+	if !ok {
+		return nil, NewTypeError(fmt.Sprintf("method name must be a string, got %T", path[len(path)-1]))
+	}
 	v := reflect.ValueOf(target)
 	m := v.MethodByName(methodName)
 	if !m.IsValid() {
@@ -806,7 +810,7 @@ func (s *Session) evaluateRemapInstr(instr Expr, element any, captures, results 
 	}
 }
 
-func (s *Session) remapEvalRef(target any, path []string, args []Expr, element any, captures, results []any) (any, error) {
+func (s *Session) remapEvalRef(target any, path []any, args []Expr, element any, captures, results []any) (any, error) {
 	if len(path) == 0 && args == nil {
 		return target, nil
 	}
@@ -843,20 +847,54 @@ func (s *Session) remapResolveID(id int64, element any, captures, results []any)
 	}
 }
 
-func accessPath(val any, path []string) any {
+func accessPath(val any, path []any) any {
 	for _, key := range path {
-		m, ok := val.(map[string]any)
-		if !ok {
+		switch container := val.(type) {
+		case map[string]any:
+			s, ok := key.(string)
+			if !ok {
+				return nil
+			}
+			val = container[s]
+		case []any:
+			// Index by a number or a numeric string (JS arr["0"] === arr[0]).
+			i, ok := pathIndex(key)
+			if !ok || i < 0 || i >= len(container) {
+				return nil
+			}
+			val = container[i]
+		default:
 			return nil
 		}
-		val = m[key]
 	}
 	return val
 }
 
+// pathIndex converts a path element to an array index. JSON numbers arrive as
+// float64; the JS client also sends numeric indices as strings (property keys
+// are strings), so a numeric string is accepted too.
+func pathIndex(key any) (int, bool) {
+	switch n := key.(type) {
+	case float64:
+		return int(n), true
+	case int:
+		return n, true
+	case int64:
+		return int(n), true
+	case string:
+		i, err := strconv.Atoi(n)
+		if err != nil {
+			return 0, false
+		}
+		return i, true
+	default:
+		return 0, false
+	}
+}
+
 // dispatchCallOnValue calls a method on a Go value directly (without export
 // table lookup). Used by remap to call methods on resolved capture values.
-func (s *Session) dispatchCallOnValue(target any, path []string, args []Expr) (any, error) {
+func (s *Session) dispatchCallOnValue(target any, path []any, args []Expr) (any, error) {
 	if target == nil {
 		return nil, NewTypeError("remap: nil target")
 	}
@@ -875,7 +913,10 @@ func (s *Session) dispatchCallOnValue(target any, path []string, args []Expr) (a
 		return target, nil
 	}
 
-	methodName := path[len(path)-1]
+	methodName, ok := path[len(path)-1].(string)
+	if !ok {
+		return nil, NewTypeError(fmt.Sprintf("remap: method name must be a string, got %T", path[len(path)-1]))
+	}
 	v := reflect.ValueOf(target)
 	m := v.MethodByName(methodName)
 	if !m.IsValid() {

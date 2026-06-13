@@ -458,9 +458,9 @@ func TestRemapPropertyExtraction(t *testing.T) {
 	// Remap: GetPeople().map(x => x.name)
 	remapExpr := RemapExpr{
 		ImportID:     0,
-		Path:         []string{"GetPeople"},
+		Path:         []any{"GetPeople"},
 		Captures:     []Expr{},
-		Instructions: []Expr{ImportExpr{ImportID: 0, Path: []string{"name"}}},
+		Instructions: []Expr{ImportExpr{ImportID: 0, Path: []any{"name"}}},
 	}
 	encoded, err := EncodeExpr(remapExpr)
 	if err != nil {
@@ -514,11 +514,11 @@ func TestRemapWithCapture(t *testing.T) {
 	//   2. Call capture[0].Greet(result1) → result 2
 	remapExpr := RemapExpr{
 		ImportID: 0,
-		Path:     []string{"GetPeople"},
+		Path:     []any{"GetPeople"},
 		Captures: []Expr{ImportExpr{ImportID: 0}},
 		Instructions: []Expr{
-			ImportExpr{ImportID: 0, Path: []string{"name"}},
-			PipelineExpr{ImportID: -1, Path: []string{"Greet"}, Args: []Expr{
+			ImportExpr{ImportID: 0, Path: []any{"name"}},
+			PipelineExpr{ImportID: -1, Path: []any{"Greet"}, Args: []Expr{
 				ImportExpr{ImportID: 1},
 			}},
 		},
