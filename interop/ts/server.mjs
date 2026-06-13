@@ -78,6 +78,11 @@ class TestService extends RpcTarget {
     return new Date(NaN);
   }
 
+  // getZeroTime returns the 0001-01-01 instant (a real date, not invalid).
+  getZeroTime() {
+    return new Date(-62135596800000);
+  }
+
   // getNumbers / getPeople / double back the remap (.map()) interop tests.
   getNumbers() {
     return [1, 2, 3];

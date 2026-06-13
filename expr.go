@@ -74,8 +74,14 @@ type BigIntExpr struct{ Value *big.Int }
 
 func (BigIntExpr) expr() {}
 
-// DateExpr represents a timestamp — ["date", unixMillis].
-type DateExpr struct{ Time time.Time }
+// DateExpr represents a timestamp — ["date", unixMillis], or a JS invalid Date
+// — ["date", null] — when Invalid is set. Invalid is distinct from the zero
+// Time so that a legitimate instant (e.g. 0001-01-01) still round-trips as a
+// real timestamp rather than collapsing to null.
+type DateExpr struct {
+	Time    time.Time
+	Invalid bool
+}
 
 func (DateExpr) expr() {}
 
@@ -233,7 +239,7 @@ func EncodeExpr(e Expr) (json.RawMessage, error) {
 	case BigIntExpr:
 		return json.Marshal([]any{"bigint", v.Value.String()})
 	case DateExpr:
-		if v.Time.IsZero() {
+		if v.Invalid {
 			// Mirror JS: an invalid/NaN Date serializes as ["date", null].
 			return json.Marshal([]any{"date", nil})
 		}
@@ -594,8 +600,8 @@ func decodeDateExpr(raw []json.RawMessage) (Expr, error) {
 		return nil, fmt.Errorf("capnweb: date: missing value")
 	}
 	if string(bytes.TrimSpace(raw[1])) == "null" {
-		// JS invalid/NaN Date: represent as the zero time.Time.
-		return DateExpr{}, nil
+		// JS invalid/NaN Date.
+		return DateExpr{Invalid: true}, nil
 	}
 	var ms float64
 	if err := json.Unmarshal(raw[1], &ms); err != nil {
