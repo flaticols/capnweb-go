@@ -27,6 +27,7 @@ const methods = {
   getNumbers: LOWER ? "getNumbers" : "GetNumbers",
   getPeople: LOWER ? "getPeople" : "GetPeople",
   double: LOWER ? "double" : "Double",
+  bigNumber: LOWER ? "bigNumber" : "BigNumber",
 };
 
 function send(ws, msg) {
@@ -349,6 +350,21 @@ describe("server interop", () => {
     const nums = stub[methods.getNumbers]();
     const result = await nums.map((n) => stub[methods.double](n));
     assert.deepEqual(result, [2, 4, 6]);
+
+    clientWs.close();
+  });
+
+  it("bigNumber returns a precise BigInt from the Go server", async () => {
+    // Use the capnweb client so ["bigint",...] is reconstructed as a BigInt;
+    // validates the Go server encodes *big.Int instead of a lossy number.
+    const { newWebSocketRpcSession } = await import("capnweb");
+    const clientWs = new WebSocket(SERVER_URL);
+    await new Promise((resolve) => clientWs.on("open", resolve));
+    const stub = newWebSocketRpcSession(clientWs);
+
+    const n = await stub[methods.bigNumber]();
+    assert.equal(typeof n, "bigint");
+    assert.equal(n, 123456789012345678901234567890n);
 
     clientWs.close();
   });

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/big"
 	"reflect"
 	"sync"
 	"time"
@@ -491,6 +492,12 @@ func (s *Session) valueToExpr(val any) (Expr, error) {
 		return s.blobToExpr(&b)
 	case time.Time:
 		return DateExpr{Time: b}, nil
+	case *big.Int:
+		// Encode as ["bigint", decimal] so JS receives a BigInt rather than a
+		// lossy float64 (json.Marshal would emit a bare number).
+		return BigIntExpr{Value: b}, nil
+	case big.Int:
+		return BigIntExpr{Value: &b}, nil
 	}
 	if _, ok := val.(RpcTarget); ok {
 		entry := s.exports.Export(val)
@@ -500,6 +507,16 @@ func (s *Session) valueToExpr(val any) (Expr, error) {
 	if _, ok := val.([]byte); ok {
 		return LiteralExpr{Value: val}, nil
 	}
+	if e, ok, err := s.collectionToExpr(val); ok || err != nil {
+		return e, err
+	}
+	return LiteralExpr{Value: val}, nil
+}
+
+// collectionToExpr recursively devalues slices/arrays (→ ArrayExpr) and
+// string-keyed maps (→ ObjectExpr). The second return is false when val is not
+// a recursable collection, so the caller falls back to a literal.
+func (s *Session) collectionToExpr(val any) (Expr, bool, error) {
 	rv := reflect.ValueOf(val)
 	switch rv.Kind() {
 	case reflect.Slice, reflect.Array:
@@ -508,28 +525,30 @@ func (s *Session) valueToExpr(val any) (Expr, error) {
 		for i := range rv.Len() {
 			e, err := s.valueToExpr(rv.Index(i).Interface())
 			if err != nil {
-				return nil, err
+				return nil, true, err
 			}
 			elems[i] = e
 		}
-		return ArrayExpr{Elements: elems}, nil
+		return ArrayExpr{Elements: elems}, true, nil
 	case reflect.Map:
-		// Object property values are themselves expressions.
+		// Object property values are themselves expressions. Non-string keys
+		// can't form a JSON object, so let those fall back to a literal.
 		if rv.Type().Key().Kind() != reflect.String {
-			break // non-string keys can't form a JSON object; fall through
+			return nil, false, nil
 		}
 		fields := make(map[string]Expr, rv.Len())
 		iter := rv.MapRange()
 		for iter.Next() {
 			e, err := s.valueToExpr(iter.Value().Interface())
 			if err != nil {
-				return nil, err
+				return nil, true, err
 			}
 			fields[iter.Key().String()] = e
 		}
-		return ObjectExpr{Fields: fields}, nil
+		return ObjectExpr{Fields: fields}, true, nil
+	default:
+		return nil, false, nil
 	}
-	return LiteralExpr{Value: val}, nil
 }
 
 // blobToExpr streams a Blob's bytes through a new pipe and returns the

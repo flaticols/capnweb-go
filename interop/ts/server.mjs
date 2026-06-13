@@ -90,6 +90,11 @@ class TestService extends RpcTarget {
   double(n) {
     return n * 2;
   }
+
+  // bigNumber returns a BigInt beyond float64 precision.
+  bigNumber() {
+    return 123456789012345678901234567890n;
+  }
 }
 
 class ChildService extends RpcTarget {
