@@ -48,6 +48,32 @@ func (s *testService) Collect(_ context.Context, reader *capnweb.StreamReader) (
 	return sb.String(), nil
 }
 
+// --- 0.8.0 features ---
+
+// MakeBlob returns a Blob; exercises Go's blob encode (streaming via pipe).
+func (s *testService) MakeBlob(_ context.Context) (*capnweb.Blob, error) {
+	return capnweb.NewBlob("text/plain", []byte("blob payload")), nil
+}
+
+// FailWithProps returns an error carrying custom properties and a cause;
+// exercises Go's ["error", name, msg, null, props] encode.
+func (s *testService) FailWithProps(_ context.Context) (any, error) {
+	return nil, &capnweb.ErrorExpr{
+		Type:    "Error",
+		Message: "with props",
+		Props: map[string]capnweb.Expr{
+			"code":   capnweb.LiteralExpr{Value: float64(42)},
+			"detail": capnweb.LiteralExpr{Value: "extra"},
+			"cause":  capnweb.ErrorExpr{Type: "RangeError", Message: "the cause"},
+		},
+	}
+}
+
+// GetInvalidDate returns the zero time, which encodes as ["date", null].
+func (s *testService) GetInvalidDate(_ context.Context) (time.Time, error) {
+	return time.Time{}, nil
+}
+
 // childService is an RpcTarget returned by reference.
 type childService struct {
 	capnweb.RpcTargetBase
@@ -339,6 +365,53 @@ func runGoClient(t *testing.T, serverURL string) {
 			if results[i] != want {
 				t.Fatalf("call %d: got %v; want %v", i, results[i], want)
 			}
+		}
+	})
+
+	t.Run("blobFromTS", func(t *testing.T) {
+		// TS server returns a Blob; Go client receives and drains it.
+		result, err := capnweb.Call[*capnweb.Blob](ctx, main, "makeBlob")
+		if err != nil {
+			t.Fatalf("makeBlob: %v", err)
+		}
+		if result.Type != "text/plain" {
+			t.Errorf("blob type = %q; want text/plain", result.Type)
+		}
+		data, err := result.Bytes(ctx)
+		if err != nil {
+			t.Fatalf("blob bytes: %v", err)
+		}
+		if string(data) != "blob payload" {
+			t.Errorf("blob = %q; want 'blob payload'", data)
+		}
+	})
+
+	t.Run("errorProps", func(t *testing.T) {
+		// TS server throws an Error with custom props + cause.
+		_, err := main.Call(ctx, "failWithProps")
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		var errExpr *capnweb.ErrorExpr
+		if !errors.As(err, &errExpr) {
+			t.Fatalf("errors.As failed: got %T", err)
+		}
+		if lit, ok := errExpr.Props["code"].(capnweb.LiteralExpr); !ok || lit.Value != float64(42) {
+			t.Errorf("props[code] = %#v; want literal 42", errExpr.Props["code"])
+		}
+		if _, ok := errExpr.Props["cause"].(capnweb.ErrorExpr); !ok {
+			t.Errorf("props[cause] = %#v; want nested ErrorExpr", errExpr.Props["cause"])
+		}
+	})
+
+	t.Run("invalidDate", func(t *testing.T) {
+		// TS server returns an invalid Date; Go decodes it to the zero time.
+		result, err := capnweb.Call[time.Time](ctx, main, "getInvalidDate")
+		if err != nil {
+			t.Fatalf("getInvalidDate: %v", err)
+		}
+		if !result.IsZero() {
+			t.Errorf("invalid date decoded to %v; want zero time", result)
 		}
 	})
 

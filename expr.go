@@ -57,6 +57,16 @@ type BytesExpr struct{ Data []byte }
 
 func (BytesExpr) expr() {}
 
+// BlobExpr represents a Blob — ["blob", type, readableExpr]. The blob's bytes
+// are streamed through a pipe (Body is normally a ReadableExpr), mirroring the
+// JS reference, which cannot read a Blob synchronously and so always streams.
+type BlobExpr struct {
+	Type string // MIME type, e.g. "text/plain"
+	Body Expr   // readable-stream expression carrying the bytes
+}
+
+func (BlobExpr) expr() {}
+
 // BigIntExpr represents an arbitrary-precision integer — ["bigint", decimal].
 type BigIntExpr struct{ Value *big.Int }
 
@@ -67,11 +77,18 @@ type DateExpr struct{ Time time.Time }
 
 func (DateExpr) expr() {}
 
-// ErrorExpr represents a remote error — ["error", type, message, stack?].
+// ErrorExpr represents a remote error — ["error", type, message, stack?, props?].
+//
+// Props carries the error's own enumerable properties plus the standard
+// "cause" slot and (for AggregateError) "errors". When Props is non-empty the
+// wire form is the 5-element ["error", type, message, stack-or-null, props];
+// the stack slot is null when Stack is empty so props always lands at index 4.
+// Errors with no extra properties keep the legacy 3- or 4-element form.
 type ErrorExpr struct {
 	Type    string // "Error", "TypeError", "RangeError", etc.
 	Message string
-	Stack   string // optional
+	Stack   string          // optional
+	Props   map[string]Expr // optional own/cause/errors properties
 }
 
 func (ErrorExpr) expr() {}
@@ -201,9 +218,15 @@ func EncodeExpr(e Expr) (json.RawMessage, error) {
 		return json.Marshal([]string{"nan"})
 	case BytesExpr:
 		return json.Marshal([]any{"bytes", base64.StdEncoding.EncodeToString(v.Data)})
+	case BlobExpr:
+		return encodeBlobExpr(v)
 	case BigIntExpr:
 		return json.Marshal([]any{"bigint", v.Value.String()})
 	case DateExpr:
+		if v.Time.IsZero() {
+			// Mirror JS: an invalid/NaN Date serializes as ["date", null].
+			return json.Marshal([]any{"date", nil})
+		}
 		return json.Marshal([]any{"date", v.Time.UnixMilli()})
 	case ErrorExpr:
 		return encodeErrorExpr(v)
@@ -235,10 +258,45 @@ func EncodeExpr(e Expr) (json.RawMessage, error) {
 }
 
 func encodeErrorExpr(v ErrorExpr) (json.RawMessage, error) {
+	if len(v.Props) > 0 {
+		props, err := encodeProps(v.Props)
+		if err != nil {
+			return nil, fmt.Errorf("capnweb: error props: %w", err)
+		}
+		// Normalize the stack slot to null so props is always at index 4.
+		var stack any
+		if v.Stack != "" {
+			stack = v.Stack
+		}
+		return json.Marshal([]any{"error", v.Type, v.Message, stack, props})
+	}
 	if v.Stack != "" {
 		return json.Marshal([]any{"error", v.Type, v.Message, v.Stack})
 	}
 	return json.Marshal([]any{"error", v.Type, v.Message})
+}
+
+func encodeProps(props map[string]Expr) (map[string]json.RawMessage, error) {
+	out := make(map[string]json.RawMessage, len(props))
+	for k, e := range props {
+		b, err := EncodeExpr(e)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", k, err)
+		}
+		out[k] = b
+	}
+	return out, nil
+}
+
+func encodeBlobExpr(v BlobExpr) (json.RawMessage, error) {
+	if v.Body == nil {
+		return nil, fmt.Errorf("capnweb: blob: missing body")
+	}
+	body, err := EncodeExpr(v.Body)
+	if err != nil {
+		return nil, fmt.Errorf("capnweb: blob body: %w", err)
+	}
+	return json.Marshal([]any{"blob", v.Type, body})
 }
 
 func encodeRequestExpr(v RequestExpr) (json.RawMessage, error) {
@@ -352,6 +410,8 @@ func decodeTaggedExpr(tag string, raw []json.RawMessage) (Expr, error) {
 		return NaNExpr{}, nil
 	case "bytes":
 		return decodeBytesExpr(raw)
+	case "blob":
+		return decodeBlobExpr(raw)
 	case "bigint":
 		return decodeBigIntExpr(raw)
 	case "date":
@@ -409,6 +469,21 @@ func decodeBytesExpr(raw []json.RawMessage) (Expr, error) {
 	return BytesExpr{Data: b}, nil
 }
 
+func decodeBlobExpr(raw []json.RawMessage) (Expr, error) {
+	if len(raw) < 3 {
+		return nil, fmt.Errorf("capnweb: blob: need type and body")
+	}
+	var typ string
+	if err := json.Unmarshal(raw[1], &typ); err != nil {
+		return nil, fmt.Errorf("capnweb: blob type: %w", err)
+	}
+	body, err := DecodeExpr(raw[2])
+	if err != nil {
+		return nil, fmt.Errorf("capnweb: blob body: %w", err)
+	}
+	return BlobExpr{Type: typ, Body: body}, nil
+}
+
 func decodeBigIntExpr(raw []json.RawMessage) (Expr, error) {
 	if len(raw) < 2 {
 		return nil, fmt.Errorf("capnweb: bigint: missing value")
@@ -427,6 +502,10 @@ func decodeBigIntExpr(raw []json.RawMessage) (Expr, error) {
 func decodeDateExpr(raw []json.RawMessage) (Expr, error) {
 	if len(raw) < 2 {
 		return nil, fmt.Errorf("capnweb: date: missing value")
+	}
+	if string(bytes.TrimSpace(raw[1])) == "null" {
+		// JS invalid/NaN Date: represent as the zero time.Time.
+		return DateExpr{}, nil
 	}
 	var ms float64
 	if err := json.Unmarshal(raw[1], &ms); err != nil {
@@ -447,10 +526,34 @@ func decodeErrorExpr(raw []json.RawMessage) (Expr, error) {
 		return nil, fmt.Errorf("capnweb: error message: %w", err)
 	}
 	var stack string
-	if len(raw) > 3 {
+	if len(raw) > 3 && string(bytes.TrimSpace(raw[3])) != "null" {
 		_ = json.Unmarshal(raw[3], &stack)
 	}
-	return ErrorExpr{Type: typ, Message: msg, Stack: stack}, nil
+	props, err := decodeProps(raw)
+	if err != nil {
+		return nil, err
+	}
+	return ErrorExpr{Type: typ, Message: msg, Stack: stack, Props: props}, nil
+}
+
+func decodeProps(raw []json.RawMessage) (map[string]Expr, error) {
+	if len(raw) < 5 || string(bytes.TrimSpace(raw[4])) == "null" {
+		return nil, nil
+	}
+	var rawProps map[string]json.RawMessage
+	if json.Unmarshal(raw[4], &rawProps) != nil {
+		// Malformed props bag: ignore it; the error itself still propagates.
+		return nil, nil //nolint:nilerr // intentionally drop unparseable props
+	}
+	props := make(map[string]Expr, len(rawProps))
+	for k, v := range rawProps {
+		e, err := DecodeExpr(v)
+		if err != nil {
+			return nil, fmt.Errorf("capnweb: error prop %q: %w", k, err)
+		}
+		props[k] = e
+	}
+	return props, nil
 }
 
 func decodeHeadersExpr(raw []json.RawMessage) (Expr, error) {
