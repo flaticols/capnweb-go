@@ -69,6 +69,7 @@ linters:
     paths:
       - _test\.go$
       - interop/
+      - examples/
     rules:
       # Type-dispatch functions (pure switch on type) are inherently wide.
       - linters: [funlen, cyclop, gocyclo, gocognit]
